@@ -1,0 +1,51 @@
+[package]
+name = "audio-filter"
+version = "0.5.7-pre"
+edition = "2021"
+
+[[bin]]
+name = "audio-filter"
+path = "src/main.rs"
+required-features = ["ui"]
+
+[[bin]]
+# Command line demo without UI or controls
+name = "audio-filter-c"
+path = "src/capture.rs"
+
+[[bin]]
+# Command line demo without UI or controls
+name = "audio-filter-pipewire"
+path = "src/capture_pipewire.rs"
+
+[features]
+ui = ["iced", "image_rs"]
+default-model-ll = ["deep_filter/default-model-ll"]
+thresholds = []
+
+[dependencies]
+iced = { version = "0.12", features = [
+  "image",
+  "debug",
+  "tokio",
+  "lazy",
+], optional = true }
+itertools = "0.12"
+crossbeam-channel = "0.5"
+image_rs = { package = "image", version = "0.24", optional = true }
+anyhow = "1.0"
+cpal = "0.15"
+clap = { version = "4.0", features = ["derive"] }
+libc = "0.2.172"
+pipewire = {version = "0.8.0", features = ["v0_3_32", "v0_3_77"]}
+pipewire-sys = "0.8.0"
+deep_filter = { path = "../libDF/", default-features = false, features = [
+  "tract",
+  "use-jemalloc",
+  "default-model",
+] }
+ndarray = "^0.15"
+rubato = "0.15"
+ringbuf = "0.3"
+env_logger = "0.10"
+log = { version = "0.4", features = ["std"] }
