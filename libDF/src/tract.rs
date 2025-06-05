@@ -31,12 +31,18 @@ impl DfParams {
         let file = File::open(tar_file).context("Could not open model tar file.")?;
         Self::from_targz(file)
     }
+
     pub fn from_bytes(tar_buf: &[u8]) -> Result<Self> {
         Self::from_targz(tar_buf)
     }
-    fn from_targz<R: Read>(f: R) -> Result<Self> {
-        let tar = GzDecoder::new(f);
+
+    pub fn from_bytes_tar(tar_buf: &[u8]) -> Result<Self> {
+        Self::from_tar(tar_buf)
+    }
+
+    fn from_tar<R: Read>(tar: R) -> Result<Self> {
         let mut archive = Archive::new(tar);
+        
         let mut enc = Vec::new();
         let mut erb_dec = Vec::new();
         let mut df_dec = Vec::new();
@@ -67,6 +73,11 @@ impl DfParams {
             erb_dec,
             df_dec,
         })
+    }
+
+    fn from_targz<R: Read>(f: R) -> Result<Self> {
+        let tar = GzDecoder::new(f);
+        Self::from_tar(tar)
     }
 }
 impl Default for DfParams {

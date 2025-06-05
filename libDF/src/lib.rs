@@ -33,8 +33,8 @@ pub mod logging;
 #[cfg(feature = "tract")]
 pub mod tract;
 
-#[cfg(feature = "wasm")]
-mod wasm;
+//#[cfg(feature = "wasm")]
+//mod wasm;
 
 #[cfg(all(feature = "wav-utils", not(feature = "dataset")))]
 pub mod wav_utils;

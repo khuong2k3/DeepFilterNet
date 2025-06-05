@@ -2,6 +2,7 @@ use std::boxed::Box;
 
 use ndarray::prelude::*;
 use wasm_bindgen::prelude::*;
+use log::info;
 
 use crate::tract::*;
 
@@ -10,6 +11,15 @@ pub struct DFState(crate::tract::DfTract);
 
 #[wasm_bindgen]
 impl DFState {
+
+    fn new_tar(model_bytes: &[u8], channels: usize, atten_lim: f32) -> Self {
+        let r_params = RuntimeParams::default_with_ch(channels).with_atten_lim(atten_lim);
+        let df_params = DfParams::from_bytes_tar(model_bytes).expect("Could not load model from path");
+        let m =
+            DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
+        DFState(m)
+    }
+
     fn new(model_bytes: &[u8], channels: usize, atten_lim: f32) -> Self {
         let r_params = RuntimeParams::default_with_ch(channels).with_atten_lim(atten_lim);
         let df_params = DfParams::from_bytes(model_bytes).expect("Could not load model from path");
@@ -25,7 +35,7 @@ impl DFState {
 /// Create a DeepFilterNet Model
 ///
 /// Args:
-///     - path: File path to a DeepFilterNet tar.gz onnx model
+///     - model_bytes: Bytes data of DeepFilterNet in format tar.gz onnx
 ///     - atten_lim: Attenuation limit in dB.
 ///
 /// Returns:
@@ -40,6 +50,15 @@ pub unsafe fn df_create(
     Box::into_raw(df.boxed())
 }
 
+#[wasm_bindgen]
+pub unsafe fn df_create_tar(
+    model_bytes: &[u8],
+    // channels: usize,
+    atten_lim: f32,
+) -> *mut DFState {
+    let df = DFState::new_tar(model_bytes, 1, atten_lim);
+    Box::into_raw(df.boxed())
+}
 /// Get DeepFilterNet frame size in samples.
 #[wasm_bindgen]
 pub unsafe fn df_get_frame_length(st: *mut DFState) -> usize {
@@ -85,4 +104,32 @@ pub unsafe fn df_process_frame(st: *mut DFState, input: &[f32]) -> js_sys::Float
     let output_view = output.view_mut();
     let _lsnr = state.0.process(input, output_view).expect("Failed to process DF frame");
     js_sys::Float32Array::from(output.as_slice().unwrap())
+}
+
+
+#[wasm_bindgen]
+extern "C" {
+    fn alert(s: &str);
+}
+
+#[wasm_bindgen]
+pub fn greet() {
+    alert("Hello, test!");
+}
+
+#[wasm_bindgen(start)]
+pub fn main_wasm_entrypoint() -> Result<(), JsValue> {
+    // Set up the panic hook to get detailed Rust panics in the browser console.
+    // This is invaluable for debugging "unreachable" errors.
+    console_error_panic_hook::set_once();
+
+    // Set up the console_log logger.
+    // You can set the logging level here. For development, Level::Debug is good.
+    // For production, you might set it to Level::Info or Level::Warn.
+    //console_log::init_with_level(Level::Debug)
+    //    .map_err(|err| JsValue::from_str(&format!("Failed to initialize logger: {}", err)))?;
+
+    info!("Rust Wasm library initialized!"); // This message will appear in the browser console
+
+    Ok(())
 }

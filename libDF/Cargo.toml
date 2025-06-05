@@ -31,6 +31,7 @@ required-features = ["bin", "tract", "wav-utils", "transforms"]
 
 [features]
 default = ["default-model", "vorbis", "flac"]
+enable_some_lib = ["wasm"]
 
 transforms = ["dep:thiserror", "dep:ndarray", "dep:rubato"]
 dataset = [
@@ -87,7 +88,7 @@ wasm = [
   "default-model",
   "dep:ndarray",
   "dep:wasm-bindgen",
-  # "dep:getrandom",
+  "dep:getrandom",
   "dep:console_error_panic_hook",
   "dep:js-sys",
 ]
@@ -127,7 +128,7 @@ tract-hir = { version = "^0.21.4", optional = true }
 flate2 = { version = "1.0.24", optional = true }
 tar = { version = "0.4.38", optional = true }
 wasm-bindgen = { version = "0.2.87", optional = true }
-getrandom = { version = "0.2", features = ["js"] }
+getrandom = { version = "0.2", features = ["js"], optional = true}
 console_error_panic_hook = { version = "0.1.1", optional = true }
 js-sys = { version = "0.3", optional = true }
 

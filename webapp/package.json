@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "js-untar": "^2.0.0",
     "solid-js": "^1.9.5"
   },
   "devDependencies": {

@@ -6,12 +6,6 @@ edition = "2021"
 [[bin]]
 name = "audio-filter"
 path = "src/main.rs"
-required-features = ["ui"]
-
-[[bin]]
-# Command line demo without UI or controls
-name = "audio-filter-c"
-path = "src/capture.rs"
 
 [[bin]]
 # Command line demo without UI or controls
@@ -19,20 +13,12 @@ name = "audio-filter-pipewire"
 path = "src/capture_pipewire.rs"
 
 [features]
-ui = ["iced", "image_rs"]
 default-model-ll = ["deep_filter/default-model-ll"]
 thresholds = []
 
 [dependencies]
-iced = { version = "0.12", features = [
-  "image",
-  "debug",
-  "tokio",
-  "lazy",
-], optional = true }
 itertools = "0.12"
 crossbeam-channel = "0.5"
-image_rs = { package = "image", version = "0.24", optional = true }
 anyhow = "1.0"
 cpal = "0.15"
 clap = { version = "4.0", features = ["derive"] }

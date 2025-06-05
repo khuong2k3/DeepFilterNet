@@ -2,11 +2,14 @@
 
 cd libDF/ || exit
 wasm-pack build --features wasm
-mv pkg ../webapp/src/.
+rm -rf ../webapp/pkg
+mv pkg ../webapp/.
 cd ..
-cp models/DeepFilterNet3_ll_onnx.tar.gz webapp/src/assets/
-cd webapp/ || exit
-bun install
+
+
+# cp models/DeepFilterNet3_ll_onnx.tar.gz webapp/public/
+# cd webapp/ || exit
+# bun install
 
 
 

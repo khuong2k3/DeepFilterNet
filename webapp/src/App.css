@@ -25,3 +25,14 @@
 .read-the-docs {
   color: #888;
 }
+
+.outer-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#audio-canvas {
+  width: 300px;
+  height: 200px;
+}
