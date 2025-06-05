@@ -26,3 +26,4 @@ debug = false
 lto = "fat"
 strip = true
 panic = "abort"
+
