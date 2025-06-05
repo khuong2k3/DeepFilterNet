@@ -2,8 +2,8 @@ use std::boxed::Box;
 
 use ndarray::prelude::*;
 use wasm_bindgen::prelude::*;
-use log::info;
-
+//use log::info;
+//
 use crate::tract::*;
 
 #[wasm_bindgen]
@@ -107,29 +107,29 @@ pub unsafe fn df_process_frame(st: *mut DFState, input: &[f32]) -> js_sys::Float
 }
 
 
-#[wasm_bindgen]
-extern "C" {
-    fn alert(s: &str);
-}
-
-#[wasm_bindgen]
-pub fn greet() {
-    alert("Hello, test!");
-}
-
-#[wasm_bindgen(start)]
-pub fn main_wasm_entrypoint() -> Result<(), JsValue> {
-    // Set up the panic hook to get detailed Rust panics in the browser console.
-    // This is invaluable for debugging "unreachable" errors.
-    console_error_panic_hook::set_once();
-
-    // Set up the console_log logger.
-    // You can set the logging level here. For development, Level::Debug is good.
-    // For production, you might set it to Level::Info or Level::Warn.
-    //console_log::init_with_level(Level::Debug)
-    //    .map_err(|err| JsValue::from_str(&format!("Failed to initialize logger: {}", err)))?;
-
-    info!("Rust Wasm library initialized!"); // This message will appear in the browser console
-
-    Ok(())
-}
+//#[wasm_bindgen]
+//extern "C" {
+//    fn alert(s: &str);
+//}
+//
+//#[wasm_bindgen]
+//pub fn greet() {
+//    alert("Hello, test!");
+//}
+//
+//#[wasm_bindgen(start)]
+//pub fn main_wasm_entrypoint() -> Result<(), JsValue> {
+//    // Set up the panic hook to get detailed Rust panics in the browser console.
+//    // This is invaluable for debugging "unreachable" errors.
+//    console_error_panic_hook::set_once();
+//
+//    // Set up the console_log logger.
+//    // You can set the logging level here. For development, Level::Debug is good.
+//    // For production, you might set it to Level::Info or Level::Warn.
+//    //console_log::init_with_level(Level::Debug)
+//    //    .map_err(|err| JsValue::from_str(&format!("Failed to initialize logger: {}", err)))?;
+//
+//    info!("Rust Wasm library initialized!"); // This message will appear in the browser console
+//
+//    Ok(())
+//}

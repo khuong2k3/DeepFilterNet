@@ -1,9 +1,11 @@
 import { createEffect, createSignal } from 'solid-js'
+import * as df from './pkg/df_audio_worklet'
 import './App.css'
 import { CMAP_INFERNO } from './cmap';
 
 async function fetchModel() {
   const response = await fetch("/DeepFilterNet3_onnx.tar.gz");
+  //const response = await fetch("/DeepFilterNet3_ll_onnx.tar.gz");
   const arrayBuffer = await response.arrayBuffer()
   return arrayBuffer
 }
@@ -11,18 +13,20 @@ async function fetchModel() {
 async function setupAudioWorklet(audioCtx: AudioContext) {
   const worketURL = new URL('worklet.js', import.meta.url)
   const wasmURL = new URL('./pkg/df_audio_worklet_bg.wasm', import.meta.url)
-  const modelArrayTar = await fetchModel()
+
+  const [modelArrayTar, wasmRes, _] = await Promise.all([
+    fetchModel(),
+    fetch(wasmURL),
+    audioCtx.audioWorklet.addModule(worketURL)
+  ])
+
   const modelBytes = new Uint8Array(modelArrayTar)
-  console.log("model bytes: ", modelBytes)
-  const wasmRes = await fetch(wasmURL)
+
   const wasmBuffer = await wasmRes.arrayBuffer()
   const wasmBytes = new Uint8Array(wasmBuffer)
 
-  await audioCtx.audioWorklet.addModule(worketURL)
-
   const audioNode = new AudioWorkletNode(audioCtx, 'WasmProcessor', {
     processorOptions: {
-      //modelBytes
       wasmBytes, modelBytes
     }
   })
@@ -35,7 +39,7 @@ function Loading() {
 
   setInterval(() => {
     setDotNum(dotNum() % 3 + 1)
-  }, 400)
+  }, 600)
 
   return <>
     {
@@ -47,7 +51,6 @@ function Loading() {
 function App() {
   const [file, setFile] = createSignal<File | null>(null);
   const [downloadUrl, setDownloadUrl] = createSignal<string>('');
-  const [disableInput, setDisableInput] = createSignal<boolean>(false);
   const [audioNode, setAudioNode] = createSignal<AudioWorkletNode>(null);
   const audioCtx = new AudioContext()
 
@@ -55,6 +58,9 @@ function App() {
 
   setupAudioWorklet(audioCtx).then((node) => {
     setAudioNode(node)
+    //node.port.postMessage({type: 'new'})
+    //node.connect(audioCtx.destination)
+    //setLoading(false)
   })
 
   createEffect(() => {
@@ -65,10 +71,9 @@ function App() {
         const audioArray = event.target.result as ArrayBuffer;
         const audioBuffer = await audioCtx.decodeAudioData(audioArray)
 
-        console.log(audioNode())
-        audioNode().connect(audioCtx.destination)
+        //audioNode().connect(audioCtx.destination)
 
-        visualize(audioBuffer, audioCtx)
+        visualize(audioBuffer, audioNode(), audioCtx)
 
         setLoading(false)
       })
@@ -81,7 +86,7 @@ function App() {
       <div class="outer-box">
         <input
           type='file'
-          disabled={disableInput()}
+          disabled={loading()}
           onChange={(e) => {
             if (e.target.files !== null) {
               setFile(e.target.files[0])
@@ -101,7 +106,7 @@ function App() {
   )
 }
 
-function visualize(audioBuffer: AudioBuffer, audioCtx: AudioContext) {
+function visualize(audioBuffer: AudioBuffer, audioNode: AudioWorkletNode, audioCtx: AudioContext) {
   const canvas = document.getElementById('audio-canvas') as HTMLCanvasElement
 
   canvas.width = 300
@@ -114,8 +119,8 @@ function visualize(audioBuffer: AudioBuffer, audioCtx: AudioContext) {
   source.connect(analyzer)
   analyzer.connect(audioCtx.destination)
   source.start()
+  //console.log(audioCtx)
 
-  console.log(analyzer)
   const specVisualyzer = new SpecVisualizer(canvas, 100, analyzer)
 
   setInterval(() => {

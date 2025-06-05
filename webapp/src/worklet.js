@@ -17,11 +17,7 @@ class WasmProcessor extends AudioWorkletProcessor {
         modelBytesCopy.set(modelBytes)
 
         this.inptr = wasmHeap + modelBytes.length
-            //this.wasm.alloc(128 * 4); // float32 size: 4
         this.outptr = this.inptr + 128 * 4
-            //this.wasm.alloc(128 * 4); // float32 size: 4
-        //console.log('not created', modelBytesCopy, modelBytesCopy.length)
-        //console.log(modelPtr, modelBytesCopy.length)
         this.dsp = this.wasm.df_new(modelPtr, modelBytesCopy.length, 30.0);
 
         this.inputbuf = new Float32Array(this.wasm.memory.buffer,
@@ -31,21 +27,34 @@ class WasmProcessor extends AudioWorkletProcessor {
         this.outbuf = new Float32Array(this.wasm.memory.buffer,
             this.outptr,
             128);
+
+        this.port.onmessage = async (event) => {
+            if (event.data.type === 'atten') {
+                const atten = event.data.atten
+                df.df_set_atten_lim(this.dsp, atten)
+            }
+            console.log(data)
+        }
     }
 
     process(inputs, outputs, parameters) {
+        const input = inputs[0]
         const output = outputs[0];
-        this.inputbuf.set(output[0])
+        if (input.length === 128) {
+            this.inputbuf.set(input[0])
+        } else {
+            this.inputbuf.set(output[0])
+        }
         this.outbuf.set(output[0])
 
-        //this.wasm.df_process(this.dsp, this.inptr, 128, this.outptr, 128);
-        this.wasm.df_process(this.dsp, this.inputbuf.length, this.inptr,this.outbuf.length,  this.outptr);
-        //this.wasm.df_set_atten_lim(this.dsp, 30.0);
+        this.wasm.df_process(this.dsp, this.inputbuf.length, this.inptr, this.outbuf.length, this.outptr);
         for (let channel = 0; channel < output.length; ++channel) {
-            const outputChannel = output[channel];
-            for (let i = 0; i < outputChannel.length; ++i) {
-                outputChannel[i] = this.outbuf[i];
-            }
+            output[channel].set(
+                this.outbuf
+            )
+            //for (let i = 0; i < output[channel].length; ++i) {
+            //    output[channel][i] = 0.01 * (2 * Math.random() - 1)
+            //}
         }
 
         return true;
