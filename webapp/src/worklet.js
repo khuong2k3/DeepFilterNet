@@ -36,9 +36,10 @@ class WasmProcessor extends AudioWorkletProcessor {
         this.port.onmessage = async (event) => {
             if (event.data.type === 'atten') {
                 const atten = event.data.atten
-                df.df_set_atten_lim(this.dsp, atten)
+                this.model.set_atten(atten)
+                //df.df_set_atten_lim(this.dsp, atten)
             }
-            console.log(data)
+            //console.log(data)
         }
     }
 

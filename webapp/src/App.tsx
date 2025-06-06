@@ -13,7 +13,7 @@ async function setupModelUpload() {
 
   const modelBytes = new Uint8Array(modelTar)
 
-  return new Model(wasm_df, modelBytes, 128)
+  return new Model(wasm_df, modelBytes, 1000)
 }
 
 function Loading() {

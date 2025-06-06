@@ -18,6 +18,7 @@ export class Model {
     processOffset: number
     readOffset: number
     process_frame_size: number
+    prepareOutputFrame: Float32Array
 
     constructor(wasm_df: df.InitOutput, modelBytes: Uint8Array, process_frame_size: number) {
         const [modelBytesCopy, modelPtr] = moveToWasm(wasm_df, modelBytes)
@@ -46,8 +47,9 @@ export class Model {
         this.processOffset = 0
         this.readOffset = 0
 
-        this.outRingBuf = new RingBuffer(2 * this.frame_ceil)
-        this.process_frame(new Float32Array(this.frame_size))
+        this.outRingBuf = new RingBuffer(3 * this.frame_ceil)
+        this.prepareOutputFrame = new Float32Array(this.process_frame_size)
+        //this.process_frame(new Float32Array(this.frame_size))
     }
 
     process_frame(input: Float32Array) { 
@@ -58,7 +60,7 @@ export class Model {
         //console.log(inputTake)
 
         this.inputBuf.set(input.slice(0, moveOffset), this.processOffset)
-        if (this.processOffset + moveOffset >= this.frame_size - 1) {
+        if (this.processOffset + moveOffset >= this.frame_size) {
             this.processOffset = this.processOffset + moveOffset
 
             const inputLeftOver = inputTake.slice(moveOffset)
@@ -70,19 +72,22 @@ export class Model {
 
             let i = 0;
             while (i < this.outBuf.length) {
-                i += this.outRingBuf.write(this.outBuf)
+                //console.log(this.outBuf.slice(i))
+                const inserted = this.outRingBuf.write(this.outBuf.slice(i))
+                i += inserted
             }
         } else {
             this.processOffset = this.processOffset + moveOffset
         }
 
-        let output = new Float32Array(this.process_frame_size)
+        //let output = new Float32Array(this.process_frame_size)
         let i = 0;
         while (i < this.process_frame_size) {
-            i += this.outRingBuf.read(output)
+            i += this.outRingBuf.read(this.prepareOutputFrame)
         }
+        //console.log(this.prepareOutputFrame)
 
-        return output
+        return this.prepareOutputFrame
     }
 
     //process_frame(input: Float32Array) {
@@ -126,6 +131,10 @@ export class Model {
     //    return this.outBuf.slice(startReadOffset, endReadOffset)
     //}
 
+    set_atten(db: number) {
+        this.wasm_df.set_atten_lim(this.model, db)
+    }
+
     frame_length() {
         return this.frame_size
     }
@@ -157,14 +166,16 @@ class RingBuffer {
         const samplesToWrite = Math.min(inputLength, availableSpace);
 
         if (samplesToWrite === 0) {
+            //console.log("empty buffer")
             return 0; // Buffer is full or input is empty
-            console.log("empty buffer")
         }
+        const takeInput = input.slice(0, samplesToWrite)
 
         this.buffer
-            .set(input.slice(0, samplesToWrite))
+            .set(takeInput, this.writeHead)
 
         this.writeHead = (this.writeHead + samplesToWrite) % this.capacity;
+        //console.log(this.writeHead)
 
         return samplesToWrite;
     }
@@ -175,11 +186,12 @@ class RingBuffer {
      */
     read(output: Float32Array): number {
         const outputLength = output.length;
-        const sampleLeftToRead = this.capacity - this.readHead
+        const sampleLeftToRead = this.capacity - this.readHead;
         const samplesToRead = Math.min(outputLength, sampleLeftToRead);
 
         if (samplesToRead === 0) {
-            output.fill(0.0); // Fill output with silence if no data
+            //console.log('empty read')
+            //output.fill(0.0); // Fill output with silence if no data
             return 0; // Buffer is empty or output is empty
         }
 
@@ -213,4 +225,22 @@ class RingBuffer {
         this.readHead = 0;
     }
 }
+
+//let ringBufTest = new RingBuffer(5)
+//
+//const input = new Float32Array([1, 2, 3, 4, 5, 6])
+//
+//let i = 0
+//while (i < input.length) {
+//    i += ringBufTest.write(input.slice(i))
+//}
+//let output = new Float32Array(3)
+//
+//ringBufTest.read(output)
+//console.assert(output[0] === 6)
+//console.assert(output[1] === 2)
+//console.assert(output[2] === 3)
+
+
+
 
