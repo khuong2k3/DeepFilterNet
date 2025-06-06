@@ -13,7 +13,7 @@ async function setupModelUpload() {
 
   const modelBytes = new Uint8Array(modelTar)
 
-  return new Model(wasm_df, modelBytes, 1000)
+  return new Model(wasm_df, modelBytes, 1280)
 }
 
 function Loading() {
@@ -46,6 +46,7 @@ function App() {
   >(null);
 
   console.log("Reload all")
+
   //setupAudioWorklet("/DeepFilterNet3_onnx.tar.gz", audioCtx).then((node) => {
   //  setAudioNode(node)
   //  //node.port.postMessage({type: 'new'})
@@ -72,7 +73,7 @@ function App() {
 
   createEffect(() => {
     if (file() !== null) {
-      specVisualizer().org.stop()
+      //specVisualizer().org.stop()
       specVisualizer().denoise.stop()
       const reader = new FileReader();
       setLoading(true)
@@ -93,14 +94,14 @@ function App() {
           let outputFloat = new Float32Array(fixToFrameLength)
           inputFrame.set(inputFloat)
 
+          //console.log(outputFloat.length)
           let i = 0;
           while (i < inputFrame.length) {
-            const frameOutput = model().process_frame(inputFrame.slice(i))
+            const frameOutput = model().process_frame(inputFrame.subarray(i))
 
             outputFloat.set(frameOutput, i)
             i += frameOutput.length
           }
-          console.log(outputFloat)
 
           const outputAudio = audioCtx.createBuffer(2, outputFloat.length, audioBuffer.sampleRate)
           outputAudio.getChannelData(0).set(outputFloat)
@@ -111,6 +112,8 @@ function App() {
           setLoading(false)
           setModelOutput(outputAudio)
         }
+
+        //specVisualizer().denoise.visualize(audioBuffer, audioCtx)
       })
       reader.readAsArrayBuffer(file())
     }

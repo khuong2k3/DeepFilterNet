@@ -37,7 +37,6 @@ class WasmProcessor extends AudioWorkletProcessor {
             if (event.data.type === 'atten') {
                 const atten = event.data.atten
                 this.model.set_atten(atten)
-                //df.df_set_atten_lim(this.dsp, atten)
             }
             //console.log(data)
         }
@@ -58,10 +57,7 @@ class WasmProcessor extends AudioWorkletProcessor {
         //this.wasm.df_process(this.dsp, this.inputbuf.length, this.inptr, this.outbuf.length, this.outptr);
         const outbuf = this.model.process_frame(output[0])
         for (let channel = 0; channel < output.length; ++channel) {
-            output[channel].set(
-                outbuf
-                //this.outbuf
-            )
+            output[channel].set(outbuf)
         }
 
         return true;
