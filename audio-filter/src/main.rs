@@ -76,12 +76,12 @@ impl PipewireFilterCapture {
         //let (rb_prod, rb_cons) = heaprb.split();
         //let rb_prod = rb_prod.into_postponed();
 
-        //let in_rb = HeapRb::<f32>::new(frame_size * 100);
-        //let out_rb = HeapRb::<f32>::new(frame_size * 100);
-        //let (in_prod, in_cons) = in_rb.split();
-        //let (out_prod, out_cons) = out_rb.split();
-        //let mut in_prod = in_prod.into_postponed();
-        //let out_prod = out_prod.into_postponed();
+        let in_rb = HeapRb::<f32>::new(frame_size * 100);
+        let out_rb = HeapRb::<f32>::new(frame_size * 100);
+        let (in_prod, in_cons) = in_rb.split();
+        let (out_prod, out_cons) = out_rb.split();
+        let mut in_prod = in_prod.into_postponed();
+        let out_prod = out_prod.into_postponed();
 
         let should_stop = Arc::new(AtomicBool::new(false));
         let has_init = Arc::new(AtomicBool::new(false));

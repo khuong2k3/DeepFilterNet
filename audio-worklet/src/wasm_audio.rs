@@ -3,6 +3,7 @@ use ndarray::{ArrayView2, ArrayViewMut2};
 
 type InnerProcess = DfTract;
 
+#[repr(C)]
 pub struct WasmAudioProcessor(InnerProcess);
 
 impl WasmAudioProcessor {
@@ -19,6 +20,11 @@ impl WasmAudioProcessor {
         let output_view = ArrayViewMut2::from_shape((1, m.hop_size), output).unwrap();
 
         let _lsnr = m.process(input, output_view).expect("Failed to process DF frame");
+    }
+
+    #[no_mangle]
+    pub fn frame_size(&mut self) -> usize {
+        self.0.hop_size
     }
 
     #[no_mangle]

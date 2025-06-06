@@ -1,85 +1,128 @@
 import { createEffect, createSignal } from 'solid-js'
-import * as df from './pkg/df_audio_worklet'
 import './App.css'
+import * as df from './pkg/df_audio_worklet'
 import { CMAP_INFERNO } from './cmap';
+import { fetchModel, setupAudioWorklet, writeWav } from './wasm-util';
+import { Model } from './noise-model';
 
-async function fetchModel() {
-  const response = await fetch("/DeepFilterNet3_onnx.tar.gz");
-  //const response = await fetch("/DeepFilterNet3_ll_onnx.tar.gz");
-  const arrayBuffer = await response.arrayBuffer()
-  return arrayBuffer
-}
-
-async function setupAudioWorklet(audioCtx: AudioContext) {
-  const worketURL = new URL('worklet.js', import.meta.url)
-  const wasmURL = new URL('./pkg/df_audio_worklet_bg.wasm', import.meta.url)
-
-  const [modelArrayTar, wasmRes, _] = await Promise.all([
-    fetchModel(),
-    fetch(wasmURL),
-    audioCtx.audioWorklet.addModule(worketURL)
+async function setupModelUpload() {
+  const [wasm_df, modelTar] = await Promise.all([
+    df.default(),
+    fetchModel("/DeepFilterNet3_onnx.tar.gz"),
   ])
 
-  const modelBytes = new Uint8Array(modelArrayTar)
+  const modelBytes = new Uint8Array(modelTar)
 
-  const wasmBuffer = await wasmRes.arrayBuffer()
-  const wasmBytes = new Uint8Array(wasmBuffer)
-
-  const audioNode = new AudioWorkletNode(audioCtx, 'WasmProcessor', {
-    processorOptions: {
-      wasmBytes, modelBytes
-    }
-  })
-
-  return audioNode
+  return new Model(wasm_df, modelBytes, 1000)
 }
 
 function Loading() {
   const [dotNum, setDotNum] = createSignal<number>(0)
 
   setInterval(() => {
-    setDotNum(dotNum() % 3 + 1)
-  }, 600)
+    setDotNum(dotNum() % 5 + 1)
+  }, 400)
 
   return <>
     {
-      "Loading" + ".".repeat(dotNum())
+      "Loading " + ".".repeat(dotNum())
     }
   </>
 }
 
 function App() {
+  const audioCtx = new AudioContext()
   const [file, setFile] = createSignal<File | null>(null);
   const [downloadUrl, setDownloadUrl] = createSignal<string>('');
   const [audioNode, setAudioNode] = createSignal<AudioWorkletNode>(null);
-  const audioCtx = new AudioContext()
-
   const [loading, setLoading] = createSignal<boolean>(false);
+  const [model, setModel] = createSignal<Model>(null);
+  const [modelOutput, setModelOutput] = createSignal<AudioBuffer>(null);
+  const [specVisualizer, setSpecVisualizer] = createSignal<
+    {
+      org: SpecVisualizer
+      denoise: SpecVisualizer
+    }
+  >(null);
 
-  setupAudioWorklet(audioCtx).then((node) => {
-    setAudioNode(node)
-    //node.port.postMessage({type: 'new'})
-    //node.connect(audioCtx.destination)
-    //setLoading(false)
+  //setupAudioWorklet("/DeepFilterNet3_onnx.tar.gz", audioCtx).then((node) => {
+  //  setAudioNode(node)
+  //  //node.port.postMessage({type: 'new'})
+  //  //node.connect(audioCtx.destination)
+  //  //setLoading(false)
+  //})
+
+  createEffect(() => {
+    setLoading(true)
+    setupModelUpload().then((model) => {
+      setModel(model)
+      setLoading(false)
+    })
   })
 
   createEffect(() => {
-    if (file() !== null && audioNode() !== null) {
+    setSpecVisualizer(
+      {
+        org: get_visualizer('audio-canvas-org', audioCtx),
+        denoise: get_visualizer('audio-canvas-denoise', audioCtx)
+      }
+    )
+  })
+
+  createEffect(() => {
+    if (file() !== null) {
+      specVisualizer().org.stop()
+      specVisualizer().denoise.stop()
       const reader = new FileReader();
+      setLoading(true)
       reader.addEventListener("load", async (event) => {
-        setLoading(true)
         const audioArray = event.target.result as ArrayBuffer;
         const audioBuffer = await audioCtx.decodeAudioData(audioArray)
 
-        //audioNode().connect(audioCtx.destination)
+        if (audioNode() !== null) {
+          audioNode().connect(audioCtx.destination)
+        }
 
-        visualize(audioBuffer, audioNode(), audioCtx)
+        if (model() !== null) {
+          let inputFloat = audioBuffer.getChannelData(0)
 
-        setLoading(false)
+          const frameLength = model().frame_length()
+          const fixToFrameLength = Math.ceil(inputFloat.length / frameLength) * frameLength
+          let inputFrame = new Float32Array(fixToFrameLength)
+          let outputFloat = new Float32Array(fixToFrameLength)
+          inputFrame.set(inputFloat)
+
+          let i = 0;
+          while (i < inputFrame.length) {
+            const frameOutput = model().process_frame(inputFrame.slice(i))
+            //console.log(frameOutput.length)
+            outputFloat.set(frameOutput, i)
+            i += frameOutput.length
+          }
+          console.log(outputFloat)
+
+          const outputAudio = audioCtx.createBuffer(2, outputFloat.length, audioBuffer.sampleRate)
+          outputAudio.getChannelData(0).set(outputFloat)
+          outputAudio.getChannelData(1).set(outputFloat)
+
+          specVisualizer().org.visualize(audioBuffer, audioCtx, false)
+          specVisualizer().denoise.visualize(outputAudio, audioCtx)
+          setLoading(false)
+          setModelOutput(outputAudio)
+        }
       })
       reader.readAsArrayBuffer(file())
     }
   });
+
+  createEffect(() => {
+    if (modelOutput() !== null) {
+      const data = writeWav(modelOutput())
+      let blob = new Blob([data])
+      let url = URL.createObjectURL(blob)
+      setDownloadUrl(url)
+    }
+  })
 
   return (
     <>
@@ -100,32 +143,33 @@ function App() {
           <a href={downloadUrl()} download={file().name}>Download</a>
         }
 
-        <canvas id="audio-canvas" />
+        <div>
+          <button onClick={() => {
+            specVisualizer().org.play()
+            specVisualizer().denoise.play()
+          }}>Play</button>
+          <button onClick={() => {
+            specVisualizer().org.pause()
+            specVisualizer().denoise.pause()
+          }}>Stop</button>
+        </div>
+
+        <canvas id="audio-canvas-org" />
+        <canvas id="audio-canvas-denoise" />
       </div>
     </>
   )
 }
 
-function visualize(audioBuffer: AudioBuffer, audioNode: AudioWorkletNode, audioCtx: AudioContext) {
-  const canvas = document.getElementById('audio-canvas') as HTMLCanvasElement
+function get_visualizer(canvasId: string, audioCtx: AudioContext) {
+  const canvas = document.getElementById(canvasId) as HTMLCanvasElement
 
   canvas.width = 300
   canvas.height = 200
-  const source = audioCtx.createBufferSource()
-  source.buffer = audioBuffer // register audio source
-
   const analyzer = audioCtx.createAnalyser()
   analyzer.fftSize = 256
-  source.connect(analyzer)
-  analyzer.connect(audioCtx.destination)
-  source.start()
-  //console.log(audioCtx)
 
-  const specVisualyzer = new SpecVisualizer(canvas, 100, analyzer)
-
-  setInterval(() => {
-    specVisualyzer.update()
-  }, 50)
+  return new SpecVisualizer(canvas, 100, analyzer)
 }
 
 class SpecVisualizer {
@@ -137,6 +181,8 @@ class SpecVisualizer {
   analyser: AnalyserNode
   specs: RingBuf<Uint8Array>
   frequencyData: Uint8Array
+  drawLoop: number
+  source: AudioBufferSourceNode
 
   constructor(canvas: HTMLCanvasElement, window_size: number, analyser: AnalyserNode) {
     this.canvas = canvas
@@ -147,7 +193,37 @@ class SpecVisualizer {
     this.frequencyData = new Uint8Array(analyser.frequencyBinCount)
     this.analyser = analyser
 
+    this.source = null
     this.specs = new RingBuf(window_size, () => new Uint8Array(analyser.frequencyBinCount))
+  }
+
+  visualize(audioBuffer: AudioBuffer, audioCtx: AudioContext, sound: boolean = true) {
+    this.source = audioCtx.createBufferSource()
+    this.source.buffer = audioBuffer // register audio source
+    this.source.connect(this.analyser)
+    this.source.start()
+
+    this.analyser.connect(audioCtx.destination)
+
+    this.drawLoop = setInterval(() => {
+      this.update()
+    }, 50)
+  }
+
+  pause() {
+    this.source.stop()
+  }
+
+  play() {
+    //this.source.channelInterpretation
+  }
+
+  stop() {
+    clearInterval(this.drawLoop)
+    this.analyser.disconnect()
+    if (this.source !== null) {
+      this.source.disconnect()
+    }
   }
 
   update() {

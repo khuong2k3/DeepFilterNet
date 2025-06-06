@@ -32,22 +32,34 @@ subprocess.run(
 
 # Note the usage of `--target no-modules` here which is required for passing
 # the memory import to each Wasm module.
-subprocess.run(
-    [
-        "wasm-bindgen",
-        os.path.join(
-            root_dir,
-            "..",
-            "target",
-            "wasm32-unknown-unknown",
-            "release",
-            "df_audio_worklet.wasm",
-        ),
-        "--out-dir",
-        os.path.join(root_dir, "pkg"),
-        "--target",
-        "web",
-        "--split-linked-modules",
-    ],
-    cwd=root_dir,
-).check_returncode()
+# subprocess.run(
+#     [
+#         "wasm-bindgen",
+#         os.path.join(
+#             root_dir,
+#             "..",
+#             "target",
+#             "wasm32-unknown-unknown",
+#             "release",
+#             "df_audio_worklet.wasm",
+#         ),
+#         "--out-dir",
+#         os.path.join(root_dir, "pkg"),
+#         "--target",
+#         "web",
+#         "--split-linked-modules",
+#     ],
+#     cwd=root_dir,
+# ).check_returncode()
+#
+# subprocess.run(
+#     [
+#         "wasm-opt",
+#         "pkg/df_audio_worklet_bg.wasm",
+#         "-o",
+#         "pkg/df_audio_worklet_bg.wasm",
+#         "-Os"
+#     ],
+#     cwd=root_dir,
+# ).check_returncode()
+
