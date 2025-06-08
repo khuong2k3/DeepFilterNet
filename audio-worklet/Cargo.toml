@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 deep_filter = { path = "../libDF/", default-features = false, features = [
   "tract",
 ] }
-getrandom = { version = "0.2", default-features = false, features = ['js'], option = true }
+getrandom = { version = "0.2", default-features = false, features = ['js']}
 ndarray = { version = "^0.15" }
 # console_error_panic_hook = "0.1.7"
 # wasm-bindgen = "0.2.100"

@@ -31,11 +31,11 @@ function Loading() {
 }
 
 function App() {
-  const audioCtx = new AudioContext()
+  const audioCtx = new AudioContext({sampleRate: 44100})
   const [file, setFile] = createSignal<File | null>(null);
   const [downloadUrl, setDownloadUrl] = createSignal<string>('');
   const [audioNode, setAudioNode] = createSignal<AudioWorkletNode>(null);
-  const [loading, setLoading] = createSignal<boolean>(false);
+  const [loading, setLoading] = createSignal<boolean>(true);
   const [model, setModel] = createSignal<Model>(null);
   const [modelOutput, setModelOutput] = createSignal<AudioBuffer>(null);
   const [specVisualizer, setSpecVisualizer] = createSignal<
@@ -47,20 +47,21 @@ function App() {
 
   console.log("Reload all")
 
-  //setupAudioWorklet("/DeepFilterNet3_onnx.tar.gz", audioCtx).then((node) => {
-  //  setAudioNode(node)
-  //  //node.port.postMessage({type: 'new'})
-  //  node.connect(audioCtx.destination)
-  //  //setLoading(false)
-  //})
-
-  createEffect(() => {
-    setLoading(true)
-    setupModelUpload().then((model) => {
-      setModel(model)
-      setLoading(false)
-    })
+  setupAudioWorklet("/DeepFilterNet3_onnx.tar.gz", audioCtx).then((node) => {
+    setAudioNode(node)
+    //node.port.postMessage({type: 'new'})
+    node.connect(audioCtx.destination)
+    console.log(node)
+    setLoading(false)
   })
+
+  //createEffect(() => {
+  //  setLoading(true)
+  //  setupModelUpload().then((model) => {
+  //    setModel(model)
+  //    setLoading(false)
+  //  })
+  //})
 
   createEffect(() => {
     setSpecVisualizer(
@@ -109,11 +110,12 @@ function App() {
 
           //specVisualizer().org.visualize(audioBuffer, audioCtx, false)
           specVisualizer().denoise.visualize(outputAudio, audioCtx)
-          setLoading(false)
           setModelOutput(outputAudio)
+        } else {
+          specVisualizer().denoise.visualize(audioBuffer, audioCtx)
         }
+        setLoading(false)
 
-        //specVisualizer().denoise.visualize(audioBuffer, audioCtx)
       })
       reader.readAsArrayBuffer(file())
     }
@@ -172,6 +174,7 @@ function get_visualizer(canvasId: string, audioCtx: AudioContext) {
   canvas.height = 200
   const analyzer = audioCtx.createAnalyser()
   analyzer.fftSize = 256
+  console.log(analyzer)
 
   return new SpecVisualizer(canvas, 100, analyzer)
 }
@@ -205,9 +208,8 @@ class SpecVisualizer {
     this.source = audioCtx.createBufferSource()
     this.source.buffer = audioBuffer // register audio source
     this.source.connect(this.analyser)
-    this.source.start()
-
     this.analyser.connect(audioCtx.destination)
+    this.source.start()
 
     this.drawLoop = setInterval(() => {
       this.update()
@@ -215,7 +217,8 @@ class SpecVisualizer {
   }
 
   pause() {
-    this.source.stop()
+    console.log(this.source)
+    //this.source
   }
 
   play() {

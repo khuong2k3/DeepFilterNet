@@ -45,16 +45,7 @@ class WasmProcessor extends AudioWorkletProcessor {
     process(inputs, outputs, parameters) {
         const input = inputs[0]
         const output = outputs[0];
-        //if (input.length === 128) {
-        //    this.inputbuf.set(input[0])
-        //} else {
-        //    this.inputbuf.set(output[0])
-        //}
-        //
-        //this.outbuf.set(output[0])
-        //const outbuf = this.model.process_frame(output)
-        ////console.log(this.outbuf)
-        //this.wasm.df_process(this.dsp, this.inputbuf.length, this.inptr, this.outbuf.length, this.outptr);
+
         const outbuf = this.model.process_frame(output[0])
         for (let channel = 0; channel < output.length; ++channel) {
             output[channel].set(outbuf)

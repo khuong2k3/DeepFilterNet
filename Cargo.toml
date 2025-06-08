@@ -6,9 +6,10 @@ members = [
   "pyDF",
   "pyDF-data",
   "ladspa",
-  # "demo",
+  "demo",
   "audio-filter",
-  "audio-worklet",
+  "audio-worklet", 
+  "realtime",
 ]
 
 [profile.dev]
