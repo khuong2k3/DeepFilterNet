@@ -6,13 +6,13 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender};
-use df::tract::{DfParams, DfTract, RuntimeParams};
-use df::Complex32;
+use crate::tract::{DfParams, DfTract, RuntimeParams};
+use crate::Complex32;
 use ndarray::{Array2, ArrayView2, Axis};
-// Import necessary PipeWire and SPA FFI types
-use ringbuf::producer::PostponedProducer;
 
+use ringbuf::producer::PostponedProducer;
 use ringbuf::{Consumer, HeapRb, SharedRb};
+// Resampling audio for sample rate != 44100
 use rubato::{FftFixedIn, FftFixedOut, Resampler};
 
 pub const DEFAULT_RATE: u32 = 44100;
@@ -45,12 +45,18 @@ pub struct RealTimeProcess {
     worker_handle: Option<JoinHandle<()>>,
 }
 
+pub struct ProcessSetting {
+    pub input_sr: usize,
+    pub output_sr: usize,
+    pub s_lsnr: Option<mpsc::Sender<f32>>,
+    pub s_spec: Option<(SendSpec, SendSpec)>,
+    pub r_opt: Option<RecvControl>,
+}
+
 impl RealTimeProcess {
     pub fn init_from_targz(
         model_bytes: &[u8],
-        input_sr: usize,
-        output_sr: usize,
-        df_com: Option<GuiCom>,
+        setting: ProcessSetting,
     ) -> Result<(Self, RbProd, RbCons)> {
         let ch = 1;
         let df_params = DfParams::from_bytes(model_bytes)?;
@@ -58,30 +64,31 @@ impl RealTimeProcess {
         let df =
             DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime");
 
-        Self::init_df(df, input_sr, output_sr, df_com)
+        Self::init_df(df, setting)
     }
 
     pub fn init_from_tar(
         model_bytes: &[u8],
-        input_sr: usize,
-        output_sr: usize,
-        df_com: Option<GuiCom>,
+        setting: ProcessSetting,
     ) -> Result<(Self, RbProd, RbCons)> {
         let ch = 1;
         let df = init_df(model_bytes, ch)?;
 
-        Self::init_df(df, input_sr, output_sr, df_com)
+        Self::init_df(df, setting)
     }
 
-    fn init_df(
-        df: DfTract,
-        input_sr: usize,
-        output_sr: usize,
-        df_com: Option<GuiCom>,
-    ) -> Result<(Self, RbProd, RbCons)> {
+    fn init_df(df: DfTract, setting: ProcessSetting) -> Result<(Self, RbProd, RbCons)> {
         let sr = df.sr;
         let frame_size = df.hop_size;
         let freq_size = df.n_freqs;
+
+        let ProcessSetting {
+            input_sr,
+            output_sr,
+            s_lsnr,
+            s_spec,
+            r_opt,
+        } = setting;
 
         let in_rb = HeapRb::<f32>::new(frame_size * 100);
         let out_rb = HeapRb::<f32>::new(frame_size * 100);
@@ -105,6 +112,12 @@ impl RealTimeProcess {
                 n += in_prod.push_slice(&padding[n..]);
             }
         }
+
+        let df_com = GuiCom {
+            s_lsnr,
+            s_spec,
+            r_opt,
+        };
 
         let worker_handle = Some(thread::spawn(get_worker_fn(
             df, in_cons, out_prod, input_sr, output_sr, controls, df_com,
@@ -136,6 +149,10 @@ impl RealTimeProcess {
         }
         Ok(())
     }
+
+    pub fn frame_size(&self) -> usize {
+        self.frame_size
+    }
 }
 
 fn get_worker_fn(
@@ -145,17 +162,13 @@ fn get_worker_fn(
     input_sr: usize,
     output_sr: usize,
     controls: AtomicControls,
-    df_com: Option<GuiCom>,
+    df_com: GuiCom,
 ) -> impl FnMut() {
     let (has_init, should_stop) = controls.into_inner();
     let df = Box::into_raw(Box::new(df));
     let df = df as usize;
 
-    let (s_lsnr, mut s_spec, mut r_opt) = if let Some(df_com) = df_com {
-        df_com.into_inner()
-    } else {
-        (None, None, None)
-    };
+    let (s_lsnr, mut s_spec, mut r_opt) = df_com.into_inner();
 
     move || {
         let mut df = unsafe { Box::from_raw(df as *mut DfTract) }; // Rc non-sense
@@ -263,7 +276,7 @@ impl AtomicControls {
     }
 }
 
-pub struct GuiCom {
+pub(crate) struct GuiCom {
     pub s_lsnr: Option<mpsc::Sender<f32>>,
     pub s_spec: Option<(SendSpec, SendSpec)>,
     pub r_opt: Option<RecvControl>,

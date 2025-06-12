@@ -32,12 +32,17 @@ impl DfParams {
         Self::from_targz(file)
     }
 
-    pub fn from_bytes(tar_buf: &[u8]) -> Result<Self> {
-        Self::from_targz(tar_buf)
+    pub fn from_bytes(tar_buf_zip: &[u8]) -> Result<Self> {
+        Self::from_targz(tar_buf_zip)
     }
 
     pub fn from_bytes_tar(tar_buf: &[u8]) -> Result<Self> {
         Self::from_tar(tar_buf)
+    }
+
+    fn from_targz<R: Read>(f: R) -> Result<Self> {
+        let tar = GzDecoder::new(f);
+        Self::from_tar(tar)
     }
 
     fn from_tar<R: Read>(tar: R) -> Result<Self> {
@@ -73,11 +78,6 @@ impl DfParams {
             erb_dec,
             df_dec,
         })
-    }
-
-    fn from_targz<R: Read>(f: R) -> Result<Self> {
-        let tar = GzDecoder::new(f);
-        Self::from_tar(tar)
     }
 }
 impl Default for DfParams {
