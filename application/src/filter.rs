@@ -1,4 +1,4 @@
-use std::{f32::consts::PI, fmt::{Display, Write}};
+use std::{f32::consts::PI, fmt::Display};
 
 
 #[derive(Clone, Debug, PartialEq, Eq)]

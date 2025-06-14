@@ -155,12 +155,36 @@ impl RealTimeProcess {
     }
 }
 
+fn create_input_resampler(input_sr: usize, df: &DfTract) -> (Option<(FftFixedOut<f32>, Vec<Vec<f32>>)>, usize) {
+    if input_sr != df.sr {
+        let r = FftFixedOut::<f32>::new(input_sr, df.sr, df.hop_size, 1, 1)
+            .expect("Failed to init input resampler");
+        let n_in = r.input_frames_max();
+        let buf = r.input_buffer_allocate(true);
+        (Some((r, buf)), n_in)
+    } else {
+        (None, df.hop_size)
+    }
+}
+
+fn create_output_resampler(output_sr: usize, df: &DfTract) -> (Option<(FftFixedIn<f32>, Vec<Vec<f32>>)>, usize) {
+    if output_sr != df.sr {
+        let r = FftFixedIn::<f32>::new(df.sr, output_sr, df.hop_size, 1, 1)
+            .expect("Failed to init output resampler");
+        let n_out = r.output_frames_max();
+        let buf = r.output_buffer_allocate(true);
+        (Some((r, buf)), n_out)
+    } else {
+        (None, df.hop_size)
+    }
+}
+
 fn get_worker_fn(
     df: DfTract,
     mut rb_in: RbCons,
     mut rb_out: RbProd,
-    input_sr: usize,
-    output_sr: usize,
+    mut input_sr: usize,
+    mut output_sr: usize,
     controls: AtomicControls,
     df_com: GuiCom,
 ) -> impl FnMut() {
@@ -180,24 +204,9 @@ fn get_worker_fn(
             .expect("Failed to run DeepFilterNet");
         has_init.store(true, Ordering::Relaxed);
         log::info!("Worker init");
-        let (mut input_resampler, n_in) = if input_sr != df.sr {
-            let r = FftFixedOut::<f32>::new(input_sr, df.sr, df.hop_size, 1, 1)
-                .expect("Failed to init input resampler");
-            let n_in = r.input_frames_max();
-            let buf = r.input_buffer_allocate(true);
-            (Some((r, buf)), n_in)
-        } else {
-            (None, df.hop_size)
-        };
-        let (mut output_resampler, n_out) = if output_sr != df.sr {
-            let r = FftFixedIn::<f32>::new(df.sr, output_sr, df.hop_size, 1, 1)
-                .expect("Failed to init output resampler");
-            let n_out = r.output_frames_max();
-            let buf = r.output_buffer_allocate(true);
-            (Some((r, buf)), n_out)
-        } else {
-            (None, df.hop_size)
-        };
+        let (mut input_resampler, mut n_in) = create_input_resampler(input_sr, &df);
+        let (mut output_resampler, mut n_out) = create_output_resampler(output_sr, &df);
+
         while !should_stop.load(Ordering::Relaxed) {
             if rb_in.len() < n_in {
                 // Sleep for half a hop size
@@ -215,7 +224,7 @@ fn get_worker_fn(
             } else {
                 let n = rb_in.pop_slice(inframe.as_slice_mut().unwrap());
                 debug_assert_eq!(n, n_in);
-                //debug_assert!(n > 0);
+                debug_assert!(n > 0);
             }
             let lsnr = df
                 .process(inframe.view(), outframe.view_mut())
@@ -225,7 +234,7 @@ fn get_worker_fn(
                 r.process_into_buffer(&[outframe.as_slice().unwrap()], buf, None).unwrap();
                 while n < n_out {
                     n += rb_out.push_slice(&buf[0][n..]);
-                    //debug_assert!(n > 0);
+                    debug_assert!(n > 0);
                 }
             } else {
                 let buf = outframe.as_slice().unwrap();
@@ -252,10 +261,20 @@ fn get_worker_fn(
                         DfControl::MinThreshDb => df.min_db_thresh = v,
                         DfControl::MaxErbThreshDb => df.max_db_erb_thresh = v,
                         DfControl::MaxDfThreshDb => df.max_db_df_thresh = v,
+                        DfControl::InputSr => {
+                            input_sr = v as usize;
+                            (input_resampler, n_in) = create_input_resampler(input_sr, &df);
+                        },
+                        DfControl::OutputSr => {
+                            output_sr = v as usize;
+                            (output_resampler, n_out) = create_output_resampler(output_sr, &df);
+                        },
                     }
                 }
             }
         }
+
+        log::warn!("Deepfilter real time process stoped");
     }
 }
 
@@ -301,4 +320,6 @@ pub enum DfControl {
     MinThreshDb,
     MaxErbThreshDb,
     MaxDfThreshDb,
+    InputSr,
+    OutputSr,
 }
