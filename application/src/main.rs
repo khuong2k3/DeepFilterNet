@@ -43,7 +43,7 @@ type SampleType = Arc<[f32]>;
 const SAMPLE_FORMAT: cpal::SampleFormat = cpal::SampleFormat::F32;
 const SAMPLE_SIZE: usize = size_of::<f32>();
 
-const N_FFT: usize = 512;
+const N_FFT: usize = 480;
 
 mod cmap;
 mod filter;
@@ -63,6 +63,7 @@ fn main() -> Result<(), iced::Error> {
 enum Error {
     FileLoadError,
     NoFileSelected,
+    SaveFileError,
 }
 
 #[derive(Debug, Clone)]
@@ -71,6 +72,8 @@ enum Message {
     FileLoaded(Result<(AudioSamples, PathBuf), Error>),
     LoadFile(PathBuf),
     PickFile,
+    SaveFile(PathBuf),
+    PickSaveFile,
     Play,
     Pause,
     MouseAudioView(Point),
@@ -113,9 +116,11 @@ struct AudioEdit {
     audio_ctl: Option<Sender<AudioSinkCtrl>>,
     fft: FftProcess,
     audio_ft: FtAudio,
-    spec: SpecImage,
+    spec_noise: SpecImage,
+    spec_enh: SpecImage,
     ft_image: image::Handle,
-    spec_image: image::Handle,
+    im_spec_enh: image::Handle,
+    im_spec_noise: image::Handle,
     model_info: ModelInfo,
     timestamp: usize,
     audio_view_ctrl: AudioViewCtrl,
@@ -130,27 +135,20 @@ impl Default for ModelInfo {
 impl Default for AudioEdit {
     fn default() -> Self {
         let audioft = FtAudio::new(300, 512, N_FFT);
-        let spec = SpecImage::new(300, N_FFT as u32 / 2 + 1, DB_MIN, DB_MAX);
+        let spec_noise = SpecImage::new(300, N_FFT as u32 / 2 + 1, DB_MIN, DB_MAX);
+        let spec_enh = SpecImage::new(300, N_FFT as u32 / 2 + 1, DB_MIN, DB_MAX);
         let au_sink = AudioSink::new().unwrap();
         let fft = FftProcess::new(N_FFT);
 
-        //let samples = AudioSamples {
-        //    audio: Arc::new([]),
-        //    sr: 1,
-        //    channels: 1,
-        //    duration: 0,
-        //};
-
-        //let audio_ctl = au_sink.init(samples).unwrap();
-
         Self {
             au_sink,
-            //samples: None,
             ft_image: audioft.image_handle(),
-            spec_image: spec.image_handle(),
+            im_spec_noise: spec_noise.image_handle(),
+            im_spec_enh: spec_enh.image_handle(),
             audio_ft: audioft,
+            spec_enh,
             audio_ctl: None,
-            spec,
+            spec_noise,
             fft,
             path: None,
             model_info: Default::default(),
@@ -201,6 +199,19 @@ impl AudioEdit {
                     Message::None
                 }
             }),
+            Message::PickSaveFile => {
+                let save_async = save_file();
+
+                Task::perform(save_async, |path| {
+                    path.map(Message::SaveFile).unwrap_or(Message::None)
+                })
+            }
+            Message::SaveFile(path) => {
+                if let Some(samples) = self.au_sink.process_samples() {
+                    samples.write_to_file(path);
+                }
+                Task::none()
+            }
             // audio message
             Message::AudioSinkMessage(messages) => {
                 for message in messages {
@@ -252,7 +263,8 @@ impl AudioEdit {
                 if samples.len() > 0 {
                     let samples_fft = self.samples2ffts(samples.iter());
                     self.update_ft(samples_fft.last().unwrap().iter().cloned());
-                    self.update_spec(samples_fft.iter(), samples.len());
+                    self.update_spec_enh();
+                    self.update_spec_noise();
                 }
 
                 Task::none()
@@ -289,9 +301,27 @@ impl AudioEdit {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let pick_file = button("Pick file").on_press(Message::PickFile);
+        let (duration, sr, have_samples) =
+            if let Some(samples) = &self.au_sink.samples.lock().unwrap().as_ref() {
+                (samples.audio.len() as f32, samples.sr as f32, true)
+            } else {
+                (0.0, 1.0, false)
+            };
 
-        let control = row![horizontal_space().width(Length::Fill), pick_file]
+        let pick_file = button("Pick file").on_press(Message::PickFile);
+        let save_file = button("Save")
+            .style(if have_samples {
+                button::primary
+            } else {
+                button::secondary
+            })
+            .on_press(if have_samples {
+                Message::PickSaveFile
+            } else {
+                Message::None
+            });
+
+        let control = row![horizontal_space().width(Length::Fill), save_file, pick_file]
             .spacing(10)
             .width(Length::Fill)
             .padding([10, 5]);
@@ -301,13 +331,6 @@ impl AudioEdit {
             .height(self.audio_ft.h() as f32);
 
         let timestamp = self.timestamp as f32;
-
-        let (duration, sr, have_samples) =
-            if let Some(samples) = &self.au_sink.samples.lock().unwrap().as_ref() {
-                (samples.audio.len() as f32, samples.sr as f32, true)
-            } else {
-                (0.0, 1.0, false)
-            };
 
         let timestap_second = timestamp / sr;
         let timestamp_minute = timestap_second / 60.0;
@@ -344,9 +367,10 @@ impl AudioEdit {
 
             let mut filter_row: Vec<Element<'_, Message>> = vec![];
             {
-                let filter = self.au_sink.filters.lock().unwrap();
-                if filter.lowpass.is_some() {
-                    filter_row.push(text!("{}", FilterType::Lowpass).into());
+                if let Ok(filter) = self.au_sink.filters.lock() {
+                    if filter.lowpass.is_some() {
+                        filter_row.push(text!("{}", FilterType::Lowpass).into());
+                    }
                 }
             }
 
@@ -365,11 +389,16 @@ impl AudioEdit {
         ]
         .spacing(5);
 
-        let spec_handle = Image::new(self.spec_image.clone())
-            .width(self.spec.w() as f32)
-            .height(self.spec.h() as f32);
+        let noise_handle = Image::new(self.im_spec_noise.clone())
+            .width(self.spec_noise.w() as f32)
+            .height(self.spec_noise.h() as f32);
 
-        let spec_view = container(spec_handle);
+        let enh_handle = Image::new(self.im_spec_enh.clone())
+            .width(self.spec_enh.w() as f32)
+            .height(self.spec_enh.h() as f32);
+
+        let spec_view = row![container(noise_handle), container(enh_handle),].spacing(10);
+        //let spec_view = row![container(noise_handle), container(enh_handle),].spacing(10);
 
         column![
             control,
@@ -403,12 +432,28 @@ impl AudioEdit {
         self.ft_image = self.audio_ft.image_handle();
     }
 
-    fn update_spec<'a, I>(&mut self, fft_samples: I, n_sample: usize)
-    where
-        I: Iterator<Item = &'a Box<[f32]>>,
-    {
-        self.spec.update(fft_samples, n_sample);
-        self.spec_image = self.spec.image_handle();
+    //fn update_spec<'a, I>(&mut self, fft_samples: I, n_sample: usize)
+    //where
+    //    I: Iterator<Item = &'a Box<[f32]>>,
+    //{
+    //    self.spec.update(fft_samples, n_sample);
+    //    self.spec_image = self.spec.image_handle();
+    //}
+
+    fn update_spec_noise(&mut self) {
+        let len = self.au_sink.r_noise.len();
+        let specs = self.au_sink.r_noise.iter().take(len);
+
+        self.spec_noise.update(specs, len);
+        self.im_spec_noise = self.spec_noise.image_handle();
+    }
+
+    fn update_spec_enh(&mut self) {
+        let len = self.au_sink.r_enh.len();
+        let specs = self.au_sink.r_enh.iter().take(len);
+
+        self.spec_enh.update(specs, len);
+        self.im_spec_enh = self.spec_enh.image_handle();
     }
 
     fn samples(&self) -> impl Future<Output = Vec<Box<[f32]>>> {
@@ -478,9 +523,9 @@ impl SpecImage {
         self.n_freqs as usize
     }
 
-    fn update<'a, I>(&mut self, specs: I, mut n_specs: usize)
+    fn update<I>(&mut self, specs: I, mut n_specs: usize)
     where
-        I: Iterator<Item = &'a Box<[f32]>>,
+        I: Iterator<Item = Box<[f32]>>,
     {
         if n_specs == 0 {
             return;
@@ -499,6 +544,7 @@ impl SpecImage {
         let (w, h) = (self.w(), self.h());
         self.im.rotate_left((w - n_specs) * 4 * h);
     }
+
     fn image_handle(&self) -> image::Handle {
         let imt_buf = imageops::rotate270(&self.im).as_raw().to_vec();
         image::Handle::from_rgba(self.n_frames, self.n_freqs, imt_buf)
@@ -522,20 +568,19 @@ struct AudioSink {
     device: cpal::Device,
     stream: Option<Stream>,
     configs: Option<StreamConfig>,
-    //frame_size: usize,
-    //in_pod: RbPod<f32>,
-    //out_cons: RbCon<f32>,
     in_pod: Sender<Box<[f32]>>,
     out_cons: Receiver<Box<[f32]>>,
     filters: Arc<Mutex<Filters>>,
 
     samples: Arc<Mutex<Option<AudioSamples>>>,
-
     proc: RealTimeProcess,
     proc_producer: Arc<Mutex<(RbProd, RbCons)>>,
     proc_ctrl: Sender<(DfControl, f32)>,
+
     s_mess: Sender<AudioSinkMessage>,
     r_mess: Receiver<AudioSinkMessage>,
+    r_noise: Receiver<Box<[f32]>>,
+    r_enh: Receiver<Box<[f32]>>,
 }
 
 impl AudioSink {
@@ -549,6 +594,8 @@ impl AudioSink {
 
         let (s_mess, r_mess) = bounded::<AudioSinkMessage>(3);
         let (proc_ctrl, proc_rev) = unbounded();
+        let (s_noise, r_noise) = unbounded();
+        let (s_enh, r_enh) = unbounded();
 
         let (proc, mut inpod, outpod) = RealTimeProcess::init_from_targz(
             include_bytes!("../../models/DeepFilterNet3_ll_onnx.tar.gz"),
@@ -556,7 +603,7 @@ impl AudioSink {
                 input_sr: 44100,
                 output_sr: 44100,
                 s_lsnr: None,
-                s_spec: None,
+                s_spec: Some((s_noise, s_enh)),
                 r_opt: Some(proc_rev),
                 //s_lsnr: Option<Sender<f32>>,
                 //s_spec: Option<(Sender<Box<[f32]>>, Sender<Box<[f32]>>)>,
@@ -565,10 +612,11 @@ impl AudioSink {
         )
         .unwrap();
         {
-            let padding = vec![0.0; 4 * proc.frame_size()];
+            let padding = vec![0.0; 2 * proc.frame_size()];
             let mut i = 0;
             while i < padding.len() {
                 i += inpod.push_slice(&padding[i..]);
+                inpod.sync();
             }
         }
 
@@ -583,6 +631,8 @@ impl AudioSink {
             out_cons,
             s_mess,
             r_mess,
+            r_noise,
+            r_enh,
             filters,
             samples: Arc::new(Mutex::new(None)),
             proc_ctrl,
@@ -634,9 +684,57 @@ impl AudioSink {
         }
     }
 
+    fn process_samples(&self) -> Option<AudioSamples> {
+        let mut proc_guard = self.proc_producer.lock().unwrap();
+        let sample_guard = self.samples.lock().unwrap();
+        let Some(samples) = sample_guard.as_ref() else {
+            return None;
+        };
+        self.proc_ctrl.send((DfControl::InputSr, samples.sr as f32)).unwrap();
+        self.proc_ctrl.send((DfControl::OutputSr, samples.sr as f32)).unwrap();
+
+        let input_audio: Vec<f32> = samples
+            .audio
+            .chunks(samples.channels as usize)
+            .map(|s| mean(s.iter().cloned()))
+            .collect();
+
+        let mut output_audio = vec![0.0; input_audio.len()];
+        let frame_size = self.proc.frame_size();
+
+        for (input, output) in
+            input_audio.chunks(frame_size).zip(output_audio.chunks_mut(frame_size))
+        {
+            let mut i = 0;
+            while i < frame_size {
+                i += proc_guard.0.push_slice(&input[i..]);
+            }
+            proc_guard.0.sync();
+
+            i = 0;
+            while i < frame_size {
+                i += proc_guard.1.pop_slice(&mut output[i..]);
+            }
+        }
+
+        let mut out_audio = vec![0.0; output_audio.len() * samples.channels as usize];
+        for i in 0..output_audio.len() {
+            out_audio[2 * i] = output_audio[i];
+            out_audio[2 * i + 1] = output_audio[i];
+        }
+
+        Some(AudioSamples {
+            audio: out_audio.into(),
+            sr: samples.sr,
+            channels: samples.channels,
+            duration: samples.duration,
+        })
+    }
+
     fn load(&mut self, samples: AudioSamples) -> Result<Sender<AudioSinkCtrl>, BuildStreamError> {
         let sr = samples.sr;
         let mut inner_samples = self.samples.lock().unwrap();
+        let input_channels = samples.channels;
         *inner_samples = Some(samples);
 
         let samples = inner_samples.as_ref().unwrap();
@@ -667,17 +765,24 @@ impl AudioSink {
         self.proc_ctrl.send((DfControl::InputSr, sr as f32)).unwrap();
         self.proc_ctrl.send((DfControl::OutputSr, sr as f32)).unwrap();
 
+        let output_channels = settings.channels;
+
+        if output_channels != input_channels {
+            log::info!("Have diffenct channels size");
+        }
+
         let stream = self.device.build_output_stream::<f32, _, _>(
             &settings,
             move |output, _info| {
                 let n_ctl_mess = audio_rev.len();
-                let samples = if let Some(samples) = samples.lock().unwrap().as_ref() {
-                    samples.audio.clone()
+                let samples_audio = if let Some(samples) = samples.lock().unwrap().as_ref() {
+                    samples.clone()
                 } else {
                     return;
                 };
 
-                //println!("{}", line!());
+                let samples = samples_audio.audio;
+
                 if n_ctl_mess > 1 {
                     for message in audio_rev.iter().take(n_ctl_mess) {
                         match message {
@@ -688,7 +793,6 @@ impl AudioSink {
                         }
                     }
                 }
-
 
                 let mut samplers_iter = samples[current_frame..].iter();
 
@@ -703,18 +807,30 @@ impl AudioSink {
                     ))
                     .unwrap();
 
-                let mut rev_au = vec![0.0; output.len() / channels as usize].into_boxed_slice();
+                let mut rev_au = vec![0.0; output.len() / output_channels as usize].into_boxed_slice();
                 let mut filter_guard = lowpass_filter.lock().unwrap();
 
-                for (i, frame) in output.chunks_mut(channels as usize).enumerate() {
-                    for i in 0..channels as usize {
-                        if let Some(&sample) = samplers_iter.next() {
-                            frame[i] = sample;
-                            current_frame += 1;
-                        } else {
-                            // If we've reached the end of the WAV file, fill the rest of the buffer with silence (0.0).
-                            frame[i] = 0.0;
+                for (i, frame) in output.chunks_mut(output_channels as usize).enumerate() {
+                    let mut sample = 0.0;
+                    for i in 0..output_channels as usize {
+                        if input_channels != 1 {
+                            if let Some(&sample_n) = samplers_iter.next() {
+                                sample = sample_n;
+                                current_frame += 1;
+                            } else {
+                                //If we've reached the end of the WAV file, fill the rest of the buffer with silence (0.0).
+                                sample = 0.0;
+                            }
+                        } else if i == 0 {
+                            if let Some(&samples_n) = samplers_iter.next() {
+                                sample = samples_n;
+                                current_frame += 1;
+                            } else {
+                                sample = 0.0;
+                            }
                         }
+
+                        frame[i] = sample;
 
                         if let Some(filter) = filter_guard.lowpass.as_mut() {
                             frame[i] = filter.process(frame[i], i);
@@ -748,7 +864,11 @@ impl AudioSink {
                     }
                 }
 
-                in_pod.send(rev_au).unwrap();
+                if filtered.len() < get_frame_size() {
+                    filtered = filtered.into_iter().pad_using(N_FFT, |_| 0.0).collect();
+                }
+
+                in_pod.send(filtered.into()).unwrap();
             },
             |_| {},
             None,
@@ -1082,4 +1202,31 @@ async fn pick_file() -> Result<PathBuf, Error> {
         .ok_or(Error::NoFileSelected)?
         .path()
         .to_path_buf())
+}
+
+async fn save_file() -> Result<PathBuf, Error> {
+    Ok(rfd::AsyncFileDialog::new()
+        .save_file()
+        .await
+        .ok_or(Error::SaveFileError)?
+        .path()
+        .to_path_buf())
+}
+
+impl AudioSamples {
+    fn write_to_file(&self, path: impl AsRef<Path>) {
+        let spec = hound::WavSpec {
+            channels: self.channels,
+            sample_rate: self.sr,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+
+        let mut writer = hound::WavWriter::create(path, spec).unwrap();
+        for s in self.audio.iter() {
+            writer.write_sample((s * i16::MAX as f32) as i16).unwrap();
+        }
+
+        writer.finalize().unwrap();
+    }
 }
