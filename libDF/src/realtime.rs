@@ -41,6 +41,7 @@ pub struct RealTimeProcess {
     pub sr: usize,
     pub frame_size: usize,
     pub freq_size: usize,
+    pub n_fft: usize,
     should_stop: Arc<AtomicBool>,
     worker_handle: Option<JoinHandle<()>>,
 }
@@ -118,6 +119,7 @@ impl RealTimeProcess {
             s_spec,
             r_opt,
         };
+        let n_fft = df.fft_size;
 
         let worker_handle = Some(thread::spawn(get_worker_fn(
             df, in_cons, out_prod, input_sr, output_sr, controls, df_com,
@@ -133,6 +135,7 @@ impl RealTimeProcess {
                 sr,
                 freq_size,
                 frame_size,
+                n_fft,
                 should_stop,
                 worker_handle,
             },
@@ -262,12 +265,18 @@ fn get_worker_fn(
                         DfControl::MaxErbThreshDb => df.max_db_erb_thresh = v,
                         DfControl::MaxDfThreshDb => df.max_db_df_thresh = v,
                         DfControl::InputSr => {
-                            input_sr = v as usize;
-                            (input_resampler, n_in) = create_input_resampler(input_sr, &df);
+                            let new_sr = v as usize;
+                            if input_sr != new_sr {
+                                input_sr = new_sr;
+                                (input_resampler, n_in) = create_input_resampler(input_sr, &df);
+                            }
                         },
                         DfControl::OutputSr => {
-                            output_sr = v as usize;
-                            (output_resampler, n_out) = create_output_resampler(output_sr, &df);
+                            let new_sr = v as usize;
+                            if output_sr != new_sr {
+                                output_sr = new_sr;
+                                (output_resampler, n_out) = create_output_resampler(output_sr, &df);
+                            }
                         },
                     }
                 }

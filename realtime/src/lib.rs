@@ -159,7 +159,7 @@ fn get_worker_fn(
     df: DfTract,
     mut rb_in: RbCons,
     mut rb_out: RbProd,
-    input_sr: usize,
+    mut input_sr: usize,
     output_sr: usize,
     controls: AtomicControls,
     df_com: GuiCom,
@@ -252,6 +252,7 @@ fn get_worker_fn(
                         DfControl::MinThreshDb => df.min_db_thresh = v,
                         DfControl::MaxErbThreshDb => df.max_db_erb_thresh = v,
                         DfControl::MaxDfThreshDb => df.max_db_df_thresh = v,
+                        DfControl::ChangeInputSampleRate(sr) => input_sr = sr,
                     }
                 }
             }
@@ -301,4 +302,5 @@ pub enum DfControl {
     MinThreshDb,
     MaxErbThreshDb,
     MaxDfThreshDb,
+    ChangeInputSampleRate(usize),
 }

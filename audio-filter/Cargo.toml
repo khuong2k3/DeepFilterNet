@@ -1,0 +1,32 @@
+[package]
+name = "audio-filter"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+iced = { version = "0.13.0", features = [
+	"image",
+	"highlighter",
+	"tokio"
+] }
+rfd = "0.15.3"
+tokio = { version = "1.45.1", features = ["fs"] }
+image_rs = { package = "image", version = "0.24"}
+hound = "3.5.1"
+anyhow = "1.0.98"
+cpal = "0.16.0"
+log = "0.4.27"
+env_logger = "0.11.8"
+itertools = "0.14.0"
+rustfft = "6.3.0"
+# ringbuf = "0.4.8"
+ringbuf = "0.3"
+crossbeam-channel = "0.5.15"
+imageproc = "0.25.0"
+deep_filter = { path = "../libDF/", default-features = false, features = [
+	"tract",
+	"use-jemalloc",
+	"default-model",
+	"realtime",
+] }
+

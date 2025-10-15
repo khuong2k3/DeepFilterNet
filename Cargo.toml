@@ -8,9 +8,8 @@ members = [
   "ladspa",
   "demo",
   "application",
-  "audio-filter",
-  "audio-worklet", 
   "realtime",
+  "audio-filter"
 ]
 
 [profile.dev]
