@@ -1,0 +1,22 @@
+[package]
+name = "realtime"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "df_realtime"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib", "staticlib"]
+
+[dependencies]
+deep_filter = { path = "../libDF/", default-features = false, features = [
+  "tract",
+] }
+getrandom = { version = "0.2", default-features = false, features = ['js'], optional = true }
+ndarray = { version = "^0.15" }
+rubato = "0.15"
+ringbuf = "0.3"
+env_logger = "0.10"
+log = { version = "0.4", features = ["std"] }
+anyhow = "1.0.98"
+crossbeam-channel = "0.5"
