@@ -9,7 +9,7 @@ pub enum FilterType {
 impl Display for FilterType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FilterType::Lowpass => f.write_str("lowpass"),
+            FilterType::Lowpass => f.write_str("Lowpass"),
         }
     }
 }
@@ -23,8 +23,8 @@ pub trait Filter {
 pub struct LowPassFilter {
     alpha: f32,                     // Filter coefficient
     previous_outputs: Vec<f32>,     // Stores y[n-1] for each channel
-    sample_rate: f32,               // Audio sample rate
     num_channels: usize,            // Number of audio channels
+    sample_rate: f32,               // Audio sample rate
 }
 
 impl LowPassFilter {

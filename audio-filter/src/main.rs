@@ -1,7 +1,6 @@
 use std::f32::consts::TAU;
 use std::fmt::Display;
 use std::future::Future;
-use std::io::{self, Write};
 use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
@@ -10,7 +9,6 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BuildStreamError, Stream, StreamConfig, SupportedStreamConfigRange};
 use crossbeam_channel::{bounded, unbounded};
 use df::realtime;
-use filter::LowPassFilter;
 use iced::widget::{
     button, column, container, horizontal_space, image, mouse_area, pick_list, row, slider, stack,
     text, tooltip, vertical_space,
@@ -26,6 +24,8 @@ use rustfft::Fft;
 
 use ringbuf::{producer::PostponedProducer, Consumer, SharedRb};
 
+use crate::audio::AudioSamples;
+
 pub type RbProd = PostponedProducer<f32, Arc<SharedRb<f32, Vec<MaybeUninit<f32>>>>>;
 pub type RbCons = Consumer<f32, Arc<SharedRb<f32, Vec<MaybeUninit<f32>>>>>;
 pub type SendLsnr = Sender<f32>;
@@ -40,11 +40,11 @@ pub type RingCon = Consumer<f32, Arc<SharedRb<f32, Vec<MaybeUninit<f32>>>>>;
 
 type Receiver<T> = crossbeam_channel::Receiver<T>;
 type Sender<T> = crossbeam_channel::Sender<T>;
+mod audio;
 mod cmap;
 const DB_MIN: f32 = -90.0;
 const DB_MAX: f32 = -10.0;
 
-type SampleType = Arc<[f32]>;
 const SAMPLE_FORMAT: cpal::SampleFormat = cpal::SampleFormat::F32;
 const SAMPLE_SIZE: usize = size_of::<f32>();
 
@@ -73,17 +73,18 @@ enum AudioSinkCtrl {
     ChangeTimesamp(usize),
 }
 
-#[derive(Clone, Debug)]
-struct AudioSamples {
-    audio: SampleType,
-    sr: u32,
-    channels: u16,
-    duration: u32,
-}
-
 struct ModelInfo {
     atten_db: f32,
     filter_beta: f32,
+    #[allow(unused)]
+    r_lsnr: mpsc::Receiver<f32>,
+    s_opt: crossbeam_channel::Sender<(realtime::DfControl, f32)>,
+    r_enh: crossbeam_channel::Receiver<Box<[f32]>>,
+    #[allow(unused)]
+    r_noisy: crossbeam_channel::Receiver<Box<[f32]>>,
+    _process: realtime::RealTimeProcess,
+    in_pod: Arc<Mutex<RingPod>>,
+    out_con: Arc<Mutex<RingCon>>,
 }
 
 #[derive(Default)]
@@ -93,7 +94,6 @@ struct AudioViewCtrl {
 
 struct AudioEdit {
     samples: Option<AudioSamples>,
-    path: Option<PathBuf>,
     au_sink: AudioSink,
     audio_ctl: Option<Sender<AudioSinkCtrl>>,
     fft: FftProcess,
@@ -105,28 +105,20 @@ struct AudioEdit {
     timestamp: usize,
     audio_view_ctrl: AudioViewCtrl,
     visualizer: AudioVisualizer,
-    r_lsnr: mpsc::Receiver<f32>,
-    s_opt: crossbeam_channel::Sender<(realtime::DfControl, f32)>,
-    r_enh: crossbeam_channel::Receiver<Box<[f32]>>,
-    r_noisy: crossbeam_channel::Receiver<Box<[f32]>>,
-    _process: realtime::RealTimeProcess,
-    in_pod: Arc<Mutex<RingPod>>,
-    out_con: Arc<Mutex<RingCon>>,
+    is_playing: bool,
 }
 
-impl Default for ModelInfo {
-    fn default() -> Self {
-        Self {
-            atten_db: 30.0,
-            filter_beta: 40.0,
-        }
-    }
-}
+//impl Default for ModelInfo {
+//    fn default() -> Self {
+//        Self {
+//            atten_db: 30.0,
+//            filter_beta: 40.0,
+//        }
+//    }
+//}
 
 impl Default for AudioEdit {
     fn default() -> Self {
-        let audioft = FtAudio::new(200, 300, N_FFT);
-        let spec = SpecImage::new(300, N_FFT as u32 / 2 + 1, DB_MIN, DB_MAX);
         let au_sink = AudioSink::new().unwrap();
         let fft = FftProcess::new(N_FFT);
 
@@ -146,7 +138,9 @@ impl Default for AudioEdit {
             },
         )
         .expect("Can't init model");
-        println!("{}", _process.frame_size());
+        //println!("{}", _process.frame_size());
+        let audioft = FtAudio::new(200, 300, _process.n_fft / 2 + 1);
+        let spec = SpecImage::new(300, _process.n_fft as u32 / 2 + 1, DB_MIN, DB_MAX);
 
         s_opt.send((realtime::DfControl::OutputSr, _process.sr as f32)).unwrap();
         Self {
@@ -158,18 +152,21 @@ impl Default for AudioEdit {
             audio_ctl: None,
             spec,
             fft,
-            path: None,
-            model_info: Default::default(),
+            model_info: ModelInfo {
+                atten_db: 100.0,
+                filter_beta: 0.02,
+                r_lsnr,
+                s_opt,
+                r_enh,
+                r_noisy,
+                _process,
+                in_pod: Arc::new(Mutex::new(in_pod)),
+                out_con: Arc::new(Mutex::new(out_con)),
+            },
+            is_playing: false,
             timestamp: 0,
             audio_view_ctrl: Default::default(),
-            visualizer: AudioVisualizer::FFT,
-            r_lsnr,
-            s_opt,
-            r_enh,
-            r_noisy,
-            _process,
-            in_pod: Arc::new(Mutex::new(in_pod)),
-            out_con: Arc::new(Mutex::new(out_con)),
+            visualizer: AudioVisualizer::FT,
         }
     }
 }
@@ -188,20 +185,23 @@ impl AudioEdit {
             Message::LoadFile(path) => Task::perform(load_audio_file(path), Message::FileLoaded),
             Message::FileLoaded(samples) => {
                 match samples {
-                    Ok((samples, path)) => {
-                        self.s_opt.send((realtime::DfControl::InputSr, samples.sr as f32)).unwrap();
+                    Ok(samples) => {
+                        self.model_info
+                            .s_opt
+                            .send((realtime::DfControl::InputSr, samples.sr() as f32))
+                            .unwrap();
                         self.audio_ctl = self
                             .au_sink
                             .load(
                                 samples.clone(),
-                                self.in_pod.clone(),
-                                self.out_con.clone(),
-                                self._process.frame_size(),
-                                self.s_opt.clone(),
+                                self.model_info.in_pod.clone(),
+                                self.model_info.out_con.clone(),
+                                self.model_info._process.frame_size(),
+                                self.model_info.s_opt.clone(),
                             )
                             .ok();
                         self.samples = Some(samples);
-                        self.path = Some(path);
+                        self.is_playing = true;
                     }
                     Err(_) => {}
                 }
@@ -221,10 +221,13 @@ impl AudioEdit {
                         AudioSinkMessage::FileEnded => {
                             log::info!("Audio stream ended");
                             self.au_sink.pause().unwrap();
-                            //self.au_sink.destroy_stream().unwrap();
                         }
                         AudioSinkMessage::Duration(timestamp) => {
                             self.timestamp = timestamp;
+                        }
+                        AudioSinkMessage::Destroyed => {
+                            self.au_sink.destroy_stream().unwrap();
+                            self.samples = None;
                         }
                     }
                 }
@@ -239,19 +242,19 @@ impl AudioEdit {
                 Task::none()
             }
             Message::Pause => {
+                self.is_playing = false;
                 self.au_sink.pause().unwrap();
                 Task::none()
             }
             Message::Play => {
                 self.au_sink.play().unwrap();
+                self.is_playing = true;
                 Task::none()
             }
             // real time message
             Message::Tick => {
                 let mut tasks = vec![];
-                //let samples = self.samples();
                 tasks.push(Task::perform(async {}, |_| Message::ProcessTick));
-                //tasks.push(Task::perform(samples, Message::ProcessTick));
                 if let Some(messages) = self.au_sink.audio_message() {
                     tasks.push(Task::perform(messages, Message::AudioSinkMessage));
                 }
@@ -259,19 +262,13 @@ impl AudioEdit {
                 Task::batch(tasks)
             }
             Message::ProcessTick => {
-                let rev_length = self.r_enh.len();
+                let rev_length = self.model_info.r_enh.len();
                 if rev_length > 0 {
-                    let spec = self.r_enh.iter().take(rev_length).collect::<Vec<_>>();
+                    let spec = self.model_info.r_enh.iter().take(rev_length).collect::<Vec<_>>();
                     self.update_spec(spec.iter(), rev_length);
                     self.update_ft(spec.last().unwrap().iter().cloned());
-                    //print!("\rLength: {:?}", spec.last().unwrap());
-                    //let _ = io::stdout().flush();
                 }
-                //if samples.len() > 0 {
-                //    let samples_fft = self.samples2ffts(samples.iter());
-                //    self.update_ft(samples_fft.last().unwrap().iter().cloned());
-                //    self.update_spec(samples_fft.iter(), samples.len());
-                //}
+
                 Task::none()
             }
             // event message
@@ -279,7 +276,7 @@ impl AudioEdit {
                 self.audio_view_ctrl.on_change_freq = true;
                 Task::none()
             }
-            Message::MouseAudioView(p) => {
+            Message::MouseAudioView(_) => {
                 //if let (Some(configs), true) =
                 //    (&self.au_sink.configs, self.audio_view_ctrl.on_change_freq)
                 //{
@@ -306,10 +303,12 @@ impl AudioEdit {
                 Task::none()
             }
             Message::UpdateModel => {
-                self.s_opt
+                self.model_info
+                    .s_opt
                     .send((realtime::DfControl::AttenLim, self.model_info.atten_db))
                     .unwrap();
-                self.s_opt
+                self.model_info
+                    .s_opt
                     .send((
                         realtime::DfControl::PostFilterBeta,
                         self.model_info.filter_beta,
@@ -326,15 +325,8 @@ impl AudioEdit {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let pick_file = button("Pick file").on_press(Message::PickFile);
-
-        let control = row![horizontal_space().width(Length::Fill), pick_file]
-            .spacing(10)
-            .width(Length::Fill)
-            .padding([10, 5]);
-
         let ft_handle = match self.visualizer {
-            AudioVisualizer::FFT => image(self.ft_image.clone()),
+            AudioVisualizer::FT => image(self.ft_image.clone()),
             AudioVisualizer::Spec => image(self.spec_image.clone()),
         }
         .width(Length::Fill)
@@ -343,7 +335,7 @@ impl AudioEdit {
 
         let timestamp = self.timestamp as f32;
         let (duration, sr) = if let Some(samples) = &self.samples {
-            (samples.duration as f32, samples.sr as f32)
+            (samples.duration() as f32, samples.sr() as f32)
         } else {
             (0.0, 1.0)
         };
@@ -372,6 +364,7 @@ impl AudioEdit {
 
         //let space = horizontal_space().width(Length::Fill);
 
+        let pick_file = button("Pick file").on_press(Message::PickFile);
         let audio_view_row = stack![
             audio_view,
             row![
@@ -381,20 +374,26 @@ impl AudioEdit {
                         .on_release(Message::UpdateModel),
                     text!("Post Filter Beta"),
                     slider(
-                        0.0..=100.0,
+                        0.0..=1.0,
                         self.model_info.filter_beta,
                         Message::PostFilterBeta
                     )
+                    .step(0.001)
                     .on_release(Message::UpdateModel),
                 ]
                 .width(Length::Fixed(300.0))
                 .padding([10, 10]),
                 vertical_space().width(Length::Fill),
-                pick_list(
-                    [AudioVisualizer::FFT, AudioVisualizer::Spec,],
-                    self.visualizer.clone().into(),
-                    Message::PickVisualizer
-                )
+                column![
+                    button("Clear file").on_press(Message::AudioSinkMessage(vec![AudioSinkMessage::Destroyed])),
+                    pick_file,
+                    pick_list(
+                        [AudioVisualizer::FT, AudioVisualizer::Spec,],
+                        self.visualizer.clone().into(),
+                        Message::PickVisualizer
+                    ),
+                ]
+                .spacing(10),
             ]
         ];
 
@@ -418,23 +417,24 @@ impl AudioEdit {
         //    audio_view_row = audio_view_row.push(filter_selector_ctrl);
         //}
 
-        let play = button("Play").on_press(Message::Play);
-        let pause = button("Pause").on_press(Message::Pause);
+        //let play = button("Play").on_press(Message::Play);
+        //let pause = button("Pause").on_press(Message::Pause);
+
+        let play_button = if self.is_playing {
+            button("Pause").on_press(Message::Pause)
+        } else {
+            button("Play").on_press(Message::Play)
+        };
+
         let play_ctrl = row![
             horizontal_space().width(Length::Fill),
-            play,
-            pause,
+            play_button,
             horizontal_space().width(Length::Fill),
         ]
         .spacing(5);
 
-        //let spec_handle = Image::new(self.spec_image.clone())
-        //    .width(self.spec.w() as f32)
-        //    .height(self.spec.h() as f32);
-        //let spec_view = container(spec_handle);
-
         column![
-            control,
+            //control,
             audio_view_row,
             timestemp_slider,
             play_ctrl,
@@ -445,6 +445,7 @@ impl AudioEdit {
         .into()
     }
 
+    #[allow(unused)]
     fn samples2ffts<'a, I>(&mut self, samples: I) -> Vec<Box<[f32]>>
     where
         I: Iterator<Item = &'a Box<[f32]>>,
@@ -473,6 +474,7 @@ impl AudioEdit {
         self.spec_image = self.spec.image_handle();
     }
 
+    #[allow(unused)]
     fn samples(&self) -> impl Future<Output = Vec<Box<[f32]>>> {
         let samples = self.au_sink.samples();
 
@@ -484,34 +486,8 @@ impl AudioEdit {
     }
 }
 
-async fn load_audio_file(path: impl AsRef<Path>) -> Result<(AudioSamples, PathBuf), Error> {
-    let pathbuf = path.as_ref().to_owned();
-    log::info!("Load file {:?}", pathbuf);
-
-    let mut reader = hound::WavReader::open(path).map_err(|_| Error::FileLoadError)?;
-    let spec = reader.spec();
-    log::info!("Audio file loaded");
-    let sr = spec.sample_rate;
-    let channels = spec.channels;
-
-    let samples = match spec.sample_format {
-        hound::SampleFormat::Int => reader
-            .samples::<i16>()
-            .flatten()
-            .map(|s| s as f32 / i16::MAX as f32)
-            .collect::<SampleType>(),
-        hound::SampleFormat::Float => reader.samples::<f32>().flatten().collect::<SampleType>(),
-    };
-
-    Ok((
-        AudioSamples {
-            sr,
-            channels,
-            audio: samples,
-            duration: reader.duration(),
-        },
-        pathbuf,
-    ))
+async fn load_audio_file(path: impl AsRef<Path>) -> Result<AudioSamples, Error> {
+    AudioSamples::load(path).map_err(|_| Error::FileLoadError)
 }
 
 struct SpecImage {
@@ -572,25 +548,23 @@ impl SpecImage {
 enum AudioSinkMessage {
     FileEnded,
     Duration(usize),
+    Destroyed,
 }
 
-#[derive(Default)]
-struct Filters {
-    lowpass: Option<LowPassFilter>,
-}
+//#[derive(Default)]
+//struct Filters {
+//    lowpass: Option<LowPassFilter>,
+//}
 
+#[allow(unused)]
 struct AudioSink {
     host: cpal::Host,
     device: cpal::Device,
     stream: Option<Stream>,
     configs: Option<StreamConfig>,
-    //frame_size: usize,
-    //in_pod: RbPod<f32>,
-    //out_cons: RbCon<f32>,
     in_pod: Sender<Box<[f32]>>,
     out_cons: Receiver<Box<[f32]>>,
-    filters: Arc<Mutex<Filters>>,
-
+    //filters: Arc<Mutex<Filters>>,
     s_mess: Sender<AudioSinkMessage>,
     r_mess: Receiver<AudioSinkMessage>,
 }
@@ -600,7 +574,7 @@ impl AudioSink {
         let host = cpal::default_host();
         let device = host.default_output_device()?;
         let (in_pod, out_cons) = unbounded();
-        let filters = Arc::new(Mutex::new(Default::default()));
+        //let filters = Arc::new(Mutex::new(Default::default()));
 
         let (s_mess, r_mess) = bounded::<AudioSinkMessage>(3);
 
@@ -613,7 +587,7 @@ impl AudioSink {
             out_cons,
             s_mess,
             r_mess,
-            filters,
+            //filters,
         })
     }
 
@@ -653,8 +627,8 @@ impl AudioSink {
         frame_size: usize,
         s_opt: crossbeam_channel::Sender<(realtime::DfControl, f32)>,
     ) -> Result<Sender<AudioSinkCtrl>, BuildStreamError> {
-        let sr = samples.sr;
-        let in_channels = samples.channels;
+        let sr = samples.sr();
+        let in_channels = samples.channels();
 
         let settings = get_stream_config(
             &self.device,
@@ -675,11 +649,6 @@ impl AudioSink {
 
         let mut current_frame = 0;
         log::info!("audio size {}", samples.len());
-
-        //let (in_pod, out_cons) = unbounded();
-        //let in_pod = self.in_pod.clone();
-
-        //let lowpass_filter = self.filters.clone();
         let s_mess = self.s_mess.clone();
 
         let (audio_ctl, audio_rev) = unbounded();
@@ -704,7 +673,7 @@ impl AudioSink {
                 if current_frame >= samples.len() {
                     log::info!("Stream ended");
                     s_mess.send(AudioSinkMessage::FileEnded).unwrap();
-                    return;
+                    current_frame = samples.len();
                 }
 
                 let mut samples_frame = samples[current_frame..].iter();
@@ -760,14 +729,13 @@ impl AudioSink {
         Ok(audio_ctl)
     }
 
-    //fn destroy_stream(&mut self) -> Result<(), cpal::PauseStreamError> {
-    //    self.pause()?;
-    //    self.stream.take();
-    //
-    //    Ok(())
-    //}
+    fn destroy_stream(&mut self) -> Result<(), cpal::PauseStreamError> {
+        self.pause()?;
+        self.stream.take();
+        Ok(())
+    }
 
-    fn play(&self) -> Result<(), cpal::PlayStreamError> {
+    fn play(&mut self) -> Result<(), cpal::PlayStreamError> {
         if let Some(stream) = &self.stream {
             log::info!("Play audio");
             stream.play()?;
@@ -775,7 +743,7 @@ impl AudioSink {
         Ok(())
     }
 
-    fn pause(&self) -> Result<(), cpal::PauseStreamError> {
+    fn pause(&mut self) -> Result<(), cpal::PauseStreamError> {
         if let Some(stream) = &self.stream {
             log::info!("Pause audio");
             stream.pause()?;
@@ -838,24 +806,13 @@ impl FtAudio {
         let bar_width = 1;
         //2 * (width / n_fft as u32).max(1);
         Self {
-            im: RgbaImage::new(n_fft as u32, n_fft as u32),
+            im: RgbaImage::new(height, n_fft as u32),
             n_fft,
             width,
             height,
             bar_width,
         }
     }
-
-    //fn freq_bins(&self) -> usize {
-    //    self.n_fft
-    //}
-
-    //fn w(&self) -> u32 {
-    //    self.height
-    //}
-    //fn h(&self) -> u32 {
-    //    self.width
-    //}
 
     fn update<I>(&mut self, fft_db: I)
     where
@@ -883,12 +840,8 @@ impl FtAudio {
 
     fn image_handle(&self) -> image::Handle {
         let img_buf = imageops::rotate270(&self.im).as_raw().to_vec();
-        image::Handle::from_rgba(self.n_fft as u32, self.n_fft as u32, img_buf)
+        image::Handle::from_rgba(self.n_fft as u32, self.height, img_buf)
     }
-}
-
-fn get_frame_size() -> usize {
-    N_FFT
 }
 
 fn get_stream_config(
@@ -938,6 +891,7 @@ fn get_stream_config(
     None
 }
 
+#[allow(unused)]
 #[derive(Clone, Copy)]
 enum StreamDirection {
     Input,
@@ -1090,14 +1044,14 @@ async fn pick_file() -> Result<PathBuf, Error> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum AudioVisualizer {
-    FFT,
+    FT,
     Spec,
 }
 
 impl ToString for AudioVisualizer {
     fn to_string(&self) -> String {
         match self {
-            AudioVisualizer::FFT => "FFT View",
+            AudioVisualizer::FT => "FT View",
             AudioVisualizer::Spec => "Spec View",
         }
         .to_string()
@@ -1107,11 +1061,12 @@ impl ToString for AudioVisualizer {
 #[derive(Debug, Clone)]
 enum Message {
     None,
-    FileLoaded(Result<(AudioSamples, PathBuf), Error>),
+    FileLoaded(Result<AudioSamples, Error>),
     LoadFile(PathBuf),
     PickFile,
     Play,
     Pause,
+    #[allow(unused)]
     MouseAudioView(Point),
     Tick,
     ProcessTick,

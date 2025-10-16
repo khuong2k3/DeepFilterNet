@@ -29,4 +29,5 @@ deep_filter = { path = "../libDF/", default-features = false, features = [
 	"default-model",
 	"realtime",
 ] }
+rodio = "0.21.1"
 
