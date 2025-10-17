@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::BufReader,
+    io::{BufReader, BufWriter, Write},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -33,6 +33,53 @@ impl AudioSamples {
             load_mp3_file(path)
         } else {
             Err(anyhow!("File not found"))
+        }
+    }
+
+    pub fn with_path_audio_channel(&self, path: impl AsRef<Path>, audio: &[f32], channels: u16) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+            sr: self.sr,
+            channels,
+            duration: self.duration,
+            audio: Arc::from(audio)
+        }
+    }
+
+    pub fn save<T: std::io::Write + std::io::Seek>(&self, mut buf_writer: BufWriter<T>) {
+        let extention = self.path.extension().unwrap();
+        if extention ==  "wav" {
+            let mut writer = hound::WavWriter::new(buf_writer, hound::WavSpec { 
+                channels: self.channels, 
+                sample_rate: self.sr, 
+                bits_per_sample: 16, 
+                sample_format: hound::SampleFormat::Int
+            }).unwrap();
+            let mut writer = writer.get_i16_writer(self.audio.len() as u32);
+            for sample in self.audio.iter() {
+                writer.write_sample((sample * i16::MAX as f32) as i16);
+            }
+        } else if extention == "mp3" {
+            let mut writer = lame::Lame::new().unwrap();
+            writer.set_channels(self.channels as u8).unwrap();
+            writer.set_sample_rate(self.sr).unwrap();
+            writer.init_params().unwrap();
+
+            let sample_size = self.audio.len();
+            let mut pcm_left = Vec::with_capacity(sample_size);
+            let mut pcm_right = Vec::with_capacity(sample_size);
+
+            for sample in self.audio.chunks(self.channels as usize) {
+                let sample = sample.iter().sum::<f32>() / sample.len() as f32;
+                let sample = (sample *  i16::MAX as f32) as i16;
+                pcm_left.push(sample);
+                pcm_right.push(sample);
+            }
+            let mp3_buffer_size = (self.audio.len() as f32 * 1.25) as usize + 7200;
+            let mut mp3_buffer = vec![0; mp3_buffer_size];
+
+            let bytes_written = writer.encode(&pcm_left, &pcm_right, &mut mp3_buffer).unwrap();
+            buf_writer.write_all(&mp3_buffer[..bytes_written]).unwrap();
         }
     }
 

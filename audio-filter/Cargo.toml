@@ -30,4 +30,6 @@ deep_filter = { path = "../libDF/", default-features = false, features = [
 	"realtime",
 ] }
 rodio = "0.21.1"
+lame = "0.1.3"
+rubato = "0.16.2"
 

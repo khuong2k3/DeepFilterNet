@@ -1,9 +1,11 @@
 use std::f32::consts::TAU;
 use std::fmt::Display;
 use std::future::Future;
+use std::io::{stdout, BufWriter, Write};
 use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
+use std::fs;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BuildStreamError, Stream, StreamConfig, SupportedStreamConfigRange};
@@ -16,7 +18,7 @@ use iced::widget::{
 use iced::{theme, Length, Point, Subscription};
 use iced::{Element, Task};
 use image_rs::{imageops, Rgba, RgbaImage};
-use itertools::Itertools;
+use itertools::{izip, Itertools};
 use ringbuf::ring_buffer::{RbWrap, RbWriteCache};
 use ringbuf::Producer;
 use rustfft::num_complex::{Complex32, ComplexFloat};
@@ -82,7 +84,7 @@ struct ModelInfo {
     r_enh: crossbeam_channel::Receiver<Box<[f32]>>,
     #[allow(unused)]
     r_noisy: crossbeam_channel::Receiver<Box<[f32]>>,
-    _process: realtime::RealTimeProcess,
+    process: realtime::RealTimeProcess,
     in_pod: Arc<Mutex<RingPod>>,
     out_con: Arc<Mutex<RingCon>>,
 }
@@ -116,6 +118,8 @@ struct AudioEdit {
 //        }
 //    }
 //}
+//
+const MODEL: &[u8] = include_bytes!("../../models/DeepFilterNet3_ll_onnx.tar.gz");
 
 impl Default for AudioEdit {
     fn default() -> Self {
@@ -128,11 +132,12 @@ impl Default for AudioEdit {
         let (s_noisy, r_noisy) = crossbeam_channel::unbounded();
 
         let (_process, in_pod, out_con) = df::realtime::RealTimeProcess::init_from_targz(
-            include_bytes!("../../models/DeepFilterNet3_ll_onnx.tar.gz"),
+            MODEL,
             df::realtime::ProcessSetting {
                 input_sr: 16_000,
                 output_sr: 16_000,
-                s_lsnr: Some(s_lsnr),
+                //s_lsnr: Some(s_lsnr),
+                s_lsnr: None,
                 s_spec: Some((s_noisy, s_enh)),
                 r_opt: Some(r_opt),
             },
@@ -159,7 +164,7 @@ impl Default for AudioEdit {
                 s_opt,
                 r_enh,
                 r_noisy,
-                _process,
+                process: _process,
                 in_pod: Arc::new(Mutex::new(in_pod)),
                 out_con: Arc::new(Mutex::new(out_con)),
             },
@@ -196,7 +201,7 @@ impl AudioEdit {
                                 samples.clone(),
                                 self.model_info.in_pod.clone(),
                                 self.model_info.out_con.clone(),
-                                self.model_info._process.frame_size(),
+                                self.model_info.process.frame_size(),
                                 self.model_info.s_opt.clone(),
                             )
                             .ok();
@@ -214,6 +219,21 @@ impl AudioEdit {
                     Message::None
                 }
             }),
+            Message::Save => {
+                self.au_sink.pause().unwrap();
+                if let Some(samples) = &self.samples {
+                    let save_fut = save_file(
+                        samples.clone(),
+                        self.model_info.in_pod.clone(),
+                        self.model_info.out_con.clone(),
+                        self.model_info.process.frame_size,
+                    );
+
+                    Task::perform(save_fut, |_| Message::None)
+                } else {
+                    Task::none()
+                }
+            }
             // audio message
             Message::AudioSinkMessage(messages) => {
                 for message in messages {
@@ -385,7 +405,9 @@ impl AudioEdit {
                 .padding([10, 10]),
                 vertical_space().width(Length::Fill),
                 column![
-                    button("Clear file").on_press(Message::AudioSinkMessage(vec![AudioSinkMessage::Destroyed])),
+                    button("Save").on_press(Message::Save),
+                    button("Clear file")
+                        .on_press(Message::AudioSinkMessage(vec![AudioSinkMessage::Destroyed])),
                     pick_file,
                     pick_list(
                         [AudioVisualizer::FT, AudioVisualizer::Spec,],
@@ -923,6 +945,62 @@ fn get_all_configs(
     }
 }
 
+async fn save_file(
+    samples: AudioSamples,
+    in_pod: Arc<Mutex<RingPod>>,
+    out_cons: Arc<Mutex<RingCon>>,
+    frame_size: usize,
+) {
+    let path_buf = samples.path().to_owned();
+    let file_name = path_buf.file_name().unwrap();
+
+    let file_handle = rfd::AsyncFileDialog::new()
+        .set_file_name(file_name.to_str().unwrap())
+        .set_directory(path_buf.parent().unwrap())
+        .save_file()
+        .await;
+
+    if let Some(file_handle) = file_handle {
+        let channels = samples.channels() as usize;
+        let n_samples = samples.audio.len() / channels;
+        let n_samples = (n_samples as f32 / frame_size as f32).ceil() as usize * frame_size;
+        let mut out_audio = vec![0.0; n_samples];
+
+        //in_pod.push_iter(&mut (0..frame_size).map(|_| 0.0));
+
+        let mut in_pod = in_pod.lock().unwrap();
+        let mut out_cons = out_cons.lock().unwrap();
+
+        for (index, in_frame, out_frame) in izip!(
+            0..,
+            samples.audio.chunks(frame_size * channels),
+            out_audio.chunks_mut(frame_size)
+        ) {
+            let in_frame: Vec<_> = in_frame
+                .chunks(channels)
+                .map(|sample| sample.iter().sum::<f32>() / channels as f32)
+                .collect();
+            let mut i = 0;
+            while i < in_frame.len() {
+                i += in_pod.push_slice(&in_frame);
+            }
+            in_pod.sync();
+
+            let mut i = 0;
+            while i < out_frame.len() {
+                i += out_cons.pop_slice(out_frame);
+            }
+
+            print!("\rIndex: {} Frame size: {}", index, in_frame.len());
+            stdout().flush().unwrap();
+        }
+        println!("{}", out_audio.len());
+        let buf_writer = BufWriter::new(fs::File::create(file_handle.path()).unwrap());
+        let out_samples = samples.with_path_audio_channel(file_handle.path(), &out_audio, 1);
+        out_samples.save(buf_writer)
+    }
+}
+
 //struct AudioImage {
 //    im: RgbaImage,
 //
@@ -1063,6 +1141,7 @@ enum Message {
     None,
     FileLoaded(Result<AudioSamples, Error>),
     LoadFile(PathBuf),
+    Save,
     PickFile,
     Play,
     Pause,
