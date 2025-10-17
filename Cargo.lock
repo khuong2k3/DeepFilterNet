@@ -580,6 +580,7 @@ dependencies = [
  "itertools 0.14.0",
  "lame",
  "log",
+ "ndarray",
  "rfd",
  "ringbuf",
  "rodio",

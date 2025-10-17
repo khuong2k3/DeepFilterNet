@@ -5,12 +5,13 @@ use std::io::{stdout, BufWriter, Write};
 use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
-use std::fs;
+use std::{fs, thread};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BuildStreamError, Stream, StreamConfig, SupportedStreamConfigRange};
 use crossbeam_channel::{bounded, unbounded};
 use df::realtime;
+use df::tract::{DfParams, DfTract};
 use iced::widget::{
     button, column, container, horizontal_space, image, mouse_area, pick_list, row, slider, stack,
     text, tooltip, vertical_space,
@@ -19,6 +20,7 @@ use iced::{theme, Length, Point, Subscription};
 use iced::{Element, Task};
 use image_rs::{imageops, Rgba, RgbaImage};
 use itertools::{izip, Itertools};
+use ndarray::Array2;
 use ringbuf::ring_buffer::{RbWrap, RbWriteCache};
 use ringbuf::Producer;
 use rustfft::num_complex::{Complex32, ComplexFloat};
@@ -82,8 +84,7 @@ struct ModelInfo {
     r_lsnr: mpsc::Receiver<f32>,
     s_opt: crossbeam_channel::Sender<(realtime::DfControl, f32)>,
     r_enh: crossbeam_channel::Receiver<Box<[f32]>>,
-    #[allow(unused)]
-    r_noisy: crossbeam_channel::Receiver<Box<[f32]>>,
+    //r_noisy: crossbeam_channel::Receiver<Box<[f32]>>,
     process: realtime::RealTimeProcess,
     in_pod: Arc<Mutex<RingPod>>,
     out_con: Arc<Mutex<RingCon>>,
@@ -119,7 +120,19 @@ struct AudioEdit {
 //    }
 //}
 //
-const MODEL: &[u8] = include_bytes!("../../models/DeepFilterNet3_ll_onnx.tar.gz");
+const MODEL_BYTES: &[u8] = include_bytes!("../../models/DeepFilterNet3_ll_onnx.tar.gz");
+static mut MODEL: Option<DfTract> = None;
+
+fn init_df(model_bytes: &[u8]) -> anyhow::Result<()> {
+    let df_params = DfParams::from_bytes(model_bytes)?;
+    let r_params = df::tract::RuntimeParams::default_with_ch(1);
+    let df = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime");
+
+    unsafe {
+        MODEL = Some(df);
+    }
+    Ok(())
+}
 
 impl Default for AudioEdit {
     fn default() -> Self {
@@ -129,16 +142,17 @@ impl Default for AudioEdit {
         let (s_lsnr, r_lsnr) = mpsc::channel();
         let (s_opt, r_opt) = crossbeam_channel::unbounded();
         let (s_enh, r_enh) = crossbeam_channel::unbounded();
-        let (s_noisy, r_noisy) = crossbeam_channel::unbounded();
+        init_df(MODEL_BYTES).unwrap();
+        //let (s_noisy, r_noisy) = crossbeam_channel::unbounded();
 
         let (_process, in_pod, out_con) = df::realtime::RealTimeProcess::init_from_targz(
-            MODEL,
+            MODEL_BYTES,
             df::realtime::ProcessSetting {
                 input_sr: 16_000,
                 output_sr: 16_000,
-                //s_lsnr: Some(s_lsnr),
-                s_lsnr: None,
-                s_spec: Some((s_noisy, s_enh)),
+                s_lsnr: Some(s_lsnr),
+                s_spec_noisy: None,
+                s_spec_enh: Some(s_enh),
                 r_opt: Some(r_opt),
             },
         )
@@ -163,7 +177,7 @@ impl Default for AudioEdit {
                 r_lsnr,
                 s_opt,
                 r_enh,
-                r_noisy,
+                //r_noisy,
                 process: _process,
                 in_pod: Arc::new(Mutex::new(in_pod)),
                 out_con: Arc::new(Mutex::new(out_con)),
@@ -222,17 +236,28 @@ impl AudioEdit {
             Message::Save => {
                 self.au_sink.pause().unwrap();
                 if let Some(samples) = &self.samples {
-                    let save_fut = save_file(
+                    let save_fut = set_save_file(
                         samples.clone(),
-                        self.model_info.in_pod.clone(),
-                        self.model_info.out_con.clone(),
-                        self.model_info.process.frame_size,
+                        //self.model_info.in_pod.clone(),
+                        //self.model_info.out_con.clone(),
+                        //self.model_info.process.frame_size,
                     );
 
-                    Task::perform(save_fut, |_| Message::None)
+                    Task::perform(save_fut, |path| match path {
+                        Some(path) => Message::SaveFile(path),
+                        None => Message::None,
+                    })
                 } else {
                     Task::none()
                 }
+            }
+            Message::SaveFile(pathbuf) => {
+                let task = save_file(
+                    pathbuf,
+                    self.samples.clone().unwrap(),
+                    self.model_info.process.frame_size,
+                );
+                Task::perform(task, |_| Message::None)
             }
             // audio message
             Message::AudioSinkMessage(messages) => {
@@ -945,12 +970,7 @@ fn get_all_configs(
     }
 }
 
-async fn save_file(
-    samples: AudioSamples,
-    in_pod: Arc<Mutex<RingPod>>,
-    out_cons: Arc<Mutex<RingCon>>,
-    frame_size: usize,
-) {
+async fn set_save_file(samples: AudioSamples) -> Option<PathBuf> {
     let path_buf = samples.path().to_owned();
     let file_name = path_buf.file_name().unwrap();
 
@@ -958,47 +978,42 @@ async fn save_file(
         .set_file_name(file_name.to_str().unwrap())
         .set_directory(path_buf.parent().unwrap())
         .save_file()
-        .await;
+        .await?;
 
-    if let Some(file_handle) = file_handle {
-        let channels = samples.channels() as usize;
-        let n_samples = samples.audio.len() / channels;
-        let n_samples = (n_samples as f32 / frame_size as f32).ceil() as usize * frame_size;
-        let mut out_audio = vec![0.0; n_samples];
+    return Some(file_handle.path().to_path_buf());
+}
 
-        //in_pod.push_iter(&mut (0..frame_size).map(|_| 0.0));
+async fn save_file(path: PathBuf, samples: AudioSamples, frame_size: usize) {
+    let channels = samples.channels() as usize;
+    let n_samples = samples.audio.len() / channels;
 
-        let mut in_pod = in_pod.lock().unwrap();
-        let mut out_cons = out_cons.lock().unwrap();
-
-        for (index, in_frame, out_frame) in izip!(
-            0..,
-            samples.audio.chunks(frame_size * channels),
-            out_audio.chunks_mut(frame_size)
-        ) {
-            let in_frame: Vec<_> = in_frame
-                .chunks(channels)
-                .map(|sample| sample.iter().sum::<f32>() / channels as f32)
-                .collect();
-            let mut i = 0;
-            while i < in_frame.len() {
-                i += in_pod.push_slice(&in_frame);
-            }
-            in_pod.sync();
-
-            let mut i = 0;
-            while i < out_frame.len() {
-                i += out_cons.pop_slice(out_frame);
-            }
-
-            print!("\rIndex: {} Frame size: {}", index, in_frame.len());
-            stdout().flush().unwrap();
-        }
-        println!("{}", out_audio.len());
-        let buf_writer = BufWriter::new(fs::File::create(file_handle.path()).unwrap());
-        let out_samples = samples.with_path_audio_channel(file_handle.path(), &out_audio, 1);
-        out_samples.save(buf_writer)
+    let mut inframe = Array2::zeros((1, frame_size));
+    let mut outframe = inframe.clone();
+    let n_samples = (n_samples as f32 / frame_size as f32).ceil() as usize * frame_size;
+    let mut out_audio = vec![0.0; n_samples];
+    let mut index = 0;
+    let mut df = unsafe { MODEL.clone().unwrap() };
+    for frame in &samples
+        .audio
+        .chunks(channels)
+        .map(|sample| sample.iter().sum::<f32>() / channels as f32)
+        .chunks(frame_size)
+    {
+        inframe
+            .as_slice_mut()
+            .unwrap()
+            .iter_mut()
+            .zip(frame)
+            .for_each(|(in_f, f)| *in_f = f);
+        df.process(inframe.view(), outframe.view_mut()).unwrap();
+        out_audio[index..index + frame_size].copy_from_slice(outframe.as_slice().unwrap());
+        index += frame_size;
     }
+
+    let out_audio = outframe.as_slice().unwrap();
+    let buf_writer = BufWriter::new(fs::File::create(&path).unwrap());
+    let out_samples = samples.with_path_audio_channel(path, out_audio, 1);
+    out_samples.save(buf_writer)
 }
 
 //struct AudioImage {
@@ -1142,6 +1157,7 @@ enum Message {
     FileLoaded(Result<AudioSamples, Error>),
     LoadFile(PathBuf),
     Save,
+    SaveFile(PathBuf),
     PickFile,
     Play,
     Pause,

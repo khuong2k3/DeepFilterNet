@@ -4,10 +4,10 @@ use std::sync::{mpsc, Arc};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use anyhow::Result;
-use crossbeam_channel::{Receiver, Sender};
 use crate::tract::{DfParams, DfTract, RuntimeParams};
 use crate::Complex32;
+use anyhow::Result;
+use crossbeam_channel::{Receiver, Sender};
 use ndarray::{Array2, ArrayView2, Axis};
 
 use ringbuf::producer::PostponedProducer;
@@ -50,7 +50,8 @@ pub struct ProcessSetting {
     pub input_sr: usize,
     pub output_sr: usize,
     pub s_lsnr: Option<mpsc::Sender<f32>>,
-    pub s_spec: Option<(SendSpec, SendSpec)>,
+    pub s_spec_enh: Option<SendSpec>,
+    pub s_spec_noisy: Option<SendSpec>,
     pub r_opt: Option<RecvControl>,
 }
 
@@ -87,7 +88,8 @@ impl RealTimeProcess {
             input_sr,
             output_sr,
             s_lsnr,
-            s_spec,
+            s_spec_enh,
+            s_spec_noisy,
             r_opt,
         } = setting;
 
@@ -116,7 +118,8 @@ impl RealTimeProcess {
 
         let df_com = GuiCom {
             s_lsnr,
-            s_spec,
+            s_spec_enh,
+            s_spec_noisy,
             r_opt,
         };
         let n_fft = df.fft_size;
@@ -158,7 +161,10 @@ impl RealTimeProcess {
     }
 }
 
-fn create_input_resampler(input_sr: usize, df: &DfTract) -> (Option<(FftFixedOut<f32>, Vec<Vec<f32>>)>, usize) {
+fn create_input_resampler(
+    input_sr: usize,
+    df: &DfTract,
+) -> (Option<(FftFixedOut<f32>, Vec<Vec<f32>>)>, usize) {
     if input_sr != df.sr {
         let r = FftFixedOut::<f32>::new(input_sr, df.sr, df.hop_size, 1, 1)
             .expect("Failed to init input resampler");
@@ -170,7 +176,10 @@ fn create_input_resampler(input_sr: usize, df: &DfTract) -> (Option<(FftFixedOut
     }
 }
 
-fn create_output_resampler(output_sr: usize, df: &DfTract) -> (Option<(FftFixedIn<f32>, Vec<Vec<f32>>)>, usize) {
+fn create_output_resampler(
+    output_sr: usize,
+    df: &DfTract,
+) -> (Option<(FftFixedIn<f32>, Vec<Vec<f32>>)>, usize) {
     if output_sr != df.sr {
         let r = FftFixedIn::<f32>::new(df.sr, output_sr, df.hop_size, 1, 1)
             .expect("Failed to init output resampler");
@@ -195,7 +204,12 @@ fn get_worker_fn(
     let df = Box::into_raw(Box::new(df));
     let df = df as usize;
 
-    let (s_lsnr, mut s_spec, mut r_opt) = df_com.into_inner();
+    let GuiCom {
+        s_lsnr,
+        mut s_spec_enh,
+        mut s_spec_noisy,
+        mut r_opt,
+    } = df_com;
 
     move || {
         let mut df = unsafe { Box::from_raw(df as *mut DfTract) }; // Rc non-sense
@@ -251,9 +265,11 @@ fn get_worker_fn(
                 s_lsnr.send(lsnr).unwrap();
             }
 
-            if let Some((ref mut s_noisy, ref mut s_enh)) = s_spec.as_mut() {
-                push_spec(df.get_spec_noisy(), s_noisy);
+            if let Some(ref mut s_enh) = s_spec_enh.as_mut() {
                 push_spec(df.get_spec_enh(), s_enh);
+            }
+            if let Some(ref mut s_noisy) = s_spec_noisy.as_mut() {
+                push_spec(df.get_spec_noisy(), s_noisy);
             }
 
             if let Some(ref mut r_opt) = r_opt.as_mut() {
@@ -270,14 +286,14 @@ fn get_worker_fn(
                                 input_sr = new_sr;
                                 (input_resampler, n_in) = create_input_resampler(input_sr, &df);
                             }
-                        },
+                        }
                         DfControl::OutputSr => {
                             let new_sr = v as usize;
                             if output_sr != new_sr {
                                 output_sr = new_sr;
                                 (output_resampler, n_out) = create_output_resampler(output_sr, &df);
                             }
-                        },
+                        }
                     }
                 }
             }
@@ -306,7 +322,8 @@ impl AtomicControls {
 
 pub(crate) struct GuiCom {
     pub s_lsnr: Option<mpsc::Sender<f32>>,
-    pub s_spec: Option<(SendSpec, SendSpec)>,
+    pub s_spec_enh: Option<SendSpec>,
+    pub s_spec_noisy: Option<SendSpec>,
     pub r_opt: Option<RecvControl>,
 }
 
@@ -315,10 +332,11 @@ impl GuiCom {
         self,
     ) -> (
         Option<mpsc::Sender<f32>>,
-        Option<(SendSpec, SendSpec)>,
+        Option<SendSpec>,
+        Option<SendSpec>,
         Option<RecvControl>,
     ) {
-        (self.s_lsnr, self.s_spec, self.r_opt)
+        (self.s_lsnr, self.s_spec_enh, self.s_spec_noisy, self.r_opt)
     }
 }
 
