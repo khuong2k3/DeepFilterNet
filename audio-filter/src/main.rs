@@ -1,11 +1,11 @@
 use std::f32::consts::TAU;
 use std::fmt::Display;
+use std::fs;
 use std::future::Future;
 use std::io::BufWriter;
 use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
-use std::fs;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BuildStreamError, Stream, StreamConfig, SupportedStreamConfigRange};
@@ -16,7 +16,7 @@ use iced::widget::{
     button, column, container, horizontal_space, image, mouse_area, pick_list, row, slider, stack,
     text, tooltip, vertical_space,
 };
-use iced::{theme, Length, Point, Subscription};
+use iced::{theme, Alignment, Length, Point, Subscription};
 use iced::{Element, Task};
 use image_rs::{imageops, Rgba, RgbaImage};
 use itertools::Itertools;
@@ -47,6 +47,7 @@ type Receiver<T> = crossbeam_channel::Receiver<T>;
 type Sender<T> = crossbeam_channel::Sender<T>;
 mod audio;
 mod cmap;
+mod widget;
 const DB_MIN: f32 = -90.0;
 const DB_MAX: f32 = -10.0;
 
@@ -430,42 +431,23 @@ impl AudioEdit {
                 .padding([10, 10]),
                 vertical_space().width(Length::Fill),
                 column![
-                    button("Save").on_press(Message::Save),
-                    button("Clear file")
-                        .on_press(Message::AudioSinkMessage(vec![AudioSinkMessage::Destroyed])),
-                    pick_file,
+                    row![
+                        button("Save").on_press(Message::Save),
+                        button("Clear file")
+                            .on_press(Message::AudioSinkMessage(vec![AudioSinkMessage::Destroyed])),
+                        pick_file,
+                    ]
+                    .spacing(10),
                     pick_list(
                         [AudioVisualizer::FT, AudioVisualizer::Spec,],
                         self.visualizer.clone().into(),
                         Message::PickVisualizer
                     ),
                 ]
-                .spacing(10),
+                .spacing(10)
+                .align_x(Alignment::End),
             ]
         ];
-
-        //if self.samples.is_some() {
-        //    let filter_selector = pick_list(
-        //        [FilterType::Lowpass],
-        //        None::<FilterType>,
-        //        Message::PickFilter,
-        //    );
-        //
-        //    let mut filter_row: Vec<Element<'_, Message>> = vec![];
-        //    {
-        //        let filter = self.au_sink.filters.lock().unwrap();
-        //        if filter.lowpass.is_some() {
-        //            filter_row.push(text!("{}", FilterType::Lowpass).into());
-        //        }
-        //    }
-        //
-        //    let filter_row = row(filter_row);
-        //    let filter_selector_ctrl = column![filter_selector, filter_row];
-        //    audio_view_row = audio_view_row.push(filter_selector_ctrl);
-        //}
-
-        //let play = button("Play").on_press(Message::Play);
-        //let pause = button("Pause").on_press(Message::Pause);
 
         let play_button = if self.is_playing {
             button("Pause").on_press(Message::Pause)
@@ -480,16 +462,10 @@ impl AudioEdit {
         ]
         .spacing(5);
 
-        column![
-            //control,
-            audio_view_row,
-            timestemp_slider,
-            play_ctrl,
-            //spec_view
-        ]
-        .spacing(10)
-        .padding([10, 10])
-        .into()
+        column![audio_view_row, timestemp_slider, play_ctrl,]
+            .spacing(10)
+            .padding([10, 10])
+            .into()
     }
 
     #[allow(unused)]
