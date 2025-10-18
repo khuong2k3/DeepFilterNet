@@ -36,13 +36,13 @@ impl AudioSamples {
         }
     }
 
-    pub fn with_path_audio_channel(&self, path: impl AsRef<Path>, audio: &[f32], channels: u16) -> Self {
+    pub fn with_path_audio_channel(&self, path: impl AsRef<Path>, audio: Arc<[f32]>, channels: u16) -> Self {
         Self {
             path: path.as_ref().to_path_buf(),
             sr: self.sr,
             channels,
             duration: self.duration,
-            audio: Arc::from(audio)
+            audio,
         }
     }
 
@@ -65,13 +65,13 @@ impl AudioSamples {
             writer.set_sample_rate(self.sr).unwrap();
             writer.init_params().unwrap();
 
-            let sample_size = self.audio.len();
+            let sample_size = self.audio.len() / self.channels as usize;
             let mut pcm_left = Vec::with_capacity(sample_size);
             let mut pcm_right = Vec::with_capacity(sample_size);
 
             for sample in self.audio.chunks(self.channels as usize) {
                 let sample = sample.iter().sum::<f32>() / sample.len() as f32;
-                let sample = (sample *  i16::MAX as f32) as i16;
+                let sample = (sample * i16::MAX as f32) as i16;
                 pcm_left.push(sample);
                 pcm_right.push(sample);
             }

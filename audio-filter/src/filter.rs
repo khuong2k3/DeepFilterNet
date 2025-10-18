@@ -1,6 +1,7 @@
-use std::{f32::consts::PI, fmt::{Display, Write}};
+use std::{f32::consts::PI, fmt::Display};
 
 
+#[allow(unused)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FilterType {
     Lowpass,
@@ -14,11 +15,13 @@ impl Display for FilterType {
     }
 }
 
+#[allow(unused)]
 pub trait Filter {
     fn process(&mut self, sample: f32, channel_idx: usize) -> f32;
 }
 
 
+#[allow(unused)]
 #[derive(Debug)] // Derive Debug for easy printing/logging
 pub struct LowPassFilter {
     alpha: f32,                     // Filter coefficient
@@ -27,6 +30,7 @@ pub struct LowPassFilter {
     sample_rate: f32,               // Audio sample rate
 }
 
+#[allow(unused)]
 impl LowPassFilter {
     /// Creates a new LowPassFilter instance.
     ///

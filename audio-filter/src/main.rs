@@ -1,11 +1,11 @@
 use std::f32::consts::TAU;
 use std::fmt::Display;
 use std::future::Future;
-use std::io::{stdout, BufWriter, Write};
+use std::io::BufWriter;
 use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
-use std::{fs, thread};
+use std::fs;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BuildStreamError, Stream, StreamConfig, SupportedStreamConfigRange};
@@ -19,10 +19,11 @@ use iced::widget::{
 use iced::{theme, Length, Point, Subscription};
 use iced::{Element, Task};
 use image_rs::{imageops, Rgba, RgbaImage};
-use itertools::{izip, Itertools};
+use itertools::Itertools;
 use ndarray::Array2;
 use ringbuf::ring_buffer::{RbWrap, RbWriteCache};
 use ringbuf::Producer;
+use rubato::{FftFixedIn, FftFixedOut, Resampler};
 use rustfft::num_complex::{Complex32, ComplexFloat};
 use rustfft::Fft;
 
@@ -234,7 +235,6 @@ impl AudioEdit {
                 }
             }),
             Message::Save => {
-                self.au_sink.pause().unwrap();
                 if let Some(samples) = &self.samples {
                     let save_fut = set_save_file(
                         samples.clone(),
@@ -989,31 +989,87 @@ async fn save_file(path: PathBuf, samples: AudioSamples, frame_size: usize) {
 
     let mut inframe = Array2::zeros((1, frame_size));
     let mut outframe = inframe.clone();
-    let n_samples = (n_samples as f32 / frame_size as f32).ceil() as usize * frame_size;
-    let mut out_audio = vec![0.0; n_samples];
     let mut index = 0;
     let mut df = unsafe { MODEL.clone().unwrap() };
+
+    let (mut input_resampler, n_in) = create_input_resampler(samples.sr() as usize, &df);
+    let (mut output_resampler, n_out) = create_output_resampler(samples.sr() as usize, &df);
+    let n_samples = (n_samples as f32 / n_out as f32).ceil() as usize * n_out;
+    let mut out_audio = vec![0.0; n_samples];
+
     for frame in &samples
         .audio
         .chunks(channels)
         .map(|sample| sample.iter().sum::<f32>() / channels as f32)
-        .chunks(frame_size)
+        .chunks(n_in)
     {
-        inframe
-            .as_slice_mut()
-            .unwrap()
-            .iter_mut()
-            .zip(frame)
-            .for_each(|(in_f, f)| *in_f = f);
+        match input_resampler.as_mut() {
+            Some((ref mut r, ref mut buf)) => {
+                buf[0].iter_mut().zip(frame).for_each(|(in_f, f)| *in_f = f);
+
+                r.process_into_buffer(buf, &mut [inframe.as_slice_mut().unwrap()], None)
+                    .unwrap();
+            }
+            None => {
+                inframe
+                    .as_slice_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .zip(frame)
+                    .for_each(|(in_f, f)| *in_f = f);
+            }
+        }
+
         df.process(inframe.view(), outframe.view_mut()).unwrap();
-        out_audio[index..index + frame_size].copy_from_slice(outframe.as_slice().unwrap());
-        index += frame_size;
+        let out_slice = &mut out_audio[index..index + n_out];
+        match output_resampler.as_mut() {
+            Some((ref mut r, ref mut buf)) => {
+                r.process_into_buffer(&[outframe.as_slice().unwrap()], buf, None).unwrap();
+
+                out_slice.copy_from_slice(&buf[0]);
+                index += n_out;
+            }
+            None => {
+                out_slice.copy_from_slice(outframe.as_slice().unwrap());
+                index += n_out;
+            }
+        }
     }
 
-    let out_audio = outframe.as_slice().unwrap();
     let buf_writer = BufWriter::new(fs::File::create(&path).unwrap());
+    let out_audio: Arc<[f32]> = out_audio.into();
     let out_samples = samples.with_path_audio_channel(path, out_audio, 1);
     out_samples.save(buf_writer)
+}
+
+fn create_input_resampler(
+    input_sr: usize,
+    df: &DfTract,
+) -> (Option<(FftFixedOut<f32>, Vec<Vec<f32>>)>, usize) {
+    if input_sr != df.sr {
+        let r = FftFixedOut::<f32>::new(input_sr, df.sr, df.hop_size, 1, 1)
+            .expect("Failed to init input resampler");
+        let n_in = r.input_frames_max();
+        let buf = r.input_buffer_allocate(true);
+        (Some((r, buf)), n_in)
+    } else {
+        (None, df.hop_size)
+    }
+}
+
+fn create_output_resampler(
+    output_sr: usize,
+    df: &DfTract,
+) -> (Option<(FftFixedIn<f32>, Vec<Vec<f32>>)>, usize) {
+    if output_sr != df.sr {
+        let r = FftFixedIn::<f32>::new(df.sr, output_sr, df.hop_size, 1, 1)
+            .expect("Failed to init output resampler");
+        let n_out = r.output_frames_max();
+        let buf = r.output_buffer_allocate(true);
+        (Some((r, buf)), n_out)
+    } else {
+        (None, df.hop_size)
+    }
 }
 
 //struct AudioImage {
