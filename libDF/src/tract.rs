@@ -451,7 +451,7 @@ impl DfTract {
     ///     - coefs: Real-valued DF coefficients estimates of shape `[n_ch, 1, 1, n_erb, 2]`.
     pub fn process_raw(&mut self) -> Result<(f32, Option<Tensor>, Option<Tensor>)> {
         let spec = self.spec_buf.to_array_view()?;
-        let ch = spec.len_of(ndarray::Axis(0));
+        let ch = spec.len_of(tract_ndarray::Axis(0));
 
         for (nsy_ch, mut erb_ch, mut cplx_ch, state) in izip!(
             spec.axis_iter(Axis(0)),
