@@ -31,7 +31,7 @@ def spec_figure(
         n_fft = kwargs.setdefault("n_fft", 1024)
         hop = kwargs.setdefault("hop", 256)
         w = torch.hann_window(n_fft, device=spec.device)
-        spec = torch.stft(spec, n_fft, hop, window=w, return_complex=False)
+        spec = torch.view_as_real(torch.stft(spec, n_fft, hop, window=w, return_complex=True))
         spec = spec.div_(w.pow(2).sum().sqrt())
     if torch.is_complex(spec) or spec.shape[-1] == 2:
         spec = as_complex(spec).abs().add_(1e-12).log10_().mul_(20)

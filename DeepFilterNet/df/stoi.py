@@ -153,7 +153,7 @@ def _stft(x, win_size, fft_size, hop_size, normalized=True, window=None):
     missing_len = fft_size - win_size
     x = F.pad(x, (missing_len // 2, missing_len // 2))
     # To spectral domain
-    spec = torch.stft(x, fft_size, hop_size, win_size, window, center=False, return_complex=False)
+    spec = torch.view_as_real(torch.stft(x, fft_size, hop_size, win_size, window, center=False, return_complex=True))
     # Normalize by default
     if normalized:
         spec /= window.sum().pow(2).sqrt()
