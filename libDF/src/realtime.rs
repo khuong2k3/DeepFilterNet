@@ -79,7 +79,7 @@ impl RealTimeProcess {
         Self::init_df(df, setting)
     }
 
-    fn init_df(df: DfTract, setting: ProcessSetting) -> Result<(Self, RbProd, RbCons)> {
+    pub fn init_df(df: DfTract, setting: ProcessSetting) -> Result<(Self, RbProd, RbCons)> {
         let sr = df.sr;
         let frame_size = df.hop_size;
         let freq_size = df.n_freqs;
