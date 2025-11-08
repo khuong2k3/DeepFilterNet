@@ -33,7 +33,7 @@ required-features = ["bin", "tract", "wav-utils", "transforms"]
 default = ["default-model", "vorbis", "flac"]
 enable_some_lib = ["wasm"]
 
-transforms = ["dep:thiserror", "dep:ndarray", "dep:rubato"]
+transforms = ["dep:thiserror", "dep:ndarray", "dep:ndarray-rand", "dep:rubato"]
 dataset = [
   "dep:thiserror",
   "dep:ndarray",

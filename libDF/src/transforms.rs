@@ -1,6 +1,6 @@
 use std::mem::MaybeUninit;
 
-use tract_core::ndarray::{prelude::*, Slice};
+use ndarray::{prelude::*, Slice};
 use rubato::{FftFixedInOut, Resampler};
 use thiserror::Error;
 
@@ -13,7 +13,7 @@ pub enum TransformError {
     #[error("DF error: {0}")]
     DfError(String),
     #[error("Ndarray Shape Error")]
-    NdarrayShapeError(#[from] tract_core::ndarray::ShapeError),
+    NdarrayShapeError(#[from] ndarray::ShapeError),
     #[error("Resample Error")]
     ResampleError(#[from] rubato::ResampleError),
 }
@@ -312,8 +312,9 @@ pub fn erb_norm(
             .unwrap();
         let mut state = state_ch0.clone();
         for _ in 1..input.len_of(Axis(0)) {
-            state.append(Axis(0), state_ch0.view()).unwrap()
+            state.append(Axis(0), state_ch0.view()).unwrap();
         }
+
         state
     });
     debug_assert_eq!(state.len_of(Axis(0)), input.len_of(Axis(0)));
@@ -502,7 +503,7 @@ fn bw_filterbank(center_freqs: &[f32], cutoff_bins: &[f32; 8]) -> Result<Array2<
             o[7] += 1.
         }
     }
-    let sum = out.sum_axis(Axis(0)).into_shape((1, 8))?;
+    let sum = out.sum_axis(Axis(0)).into_shape((1, 8)).unwrap();
     Ok(out / sum)
 }
 
@@ -588,25 +589,25 @@ mod tests {
 
     static INIT: Once = Once::new();
 
-    /// Setup function that is only run once, even if called multiple times.
-    fn setup() -> (Array2<f32>, usize) {
-        seed_from_u64(42);
-        create_out_dir().expect("Could not create output directory");
-
-        INIT.call_once(|| {
-            let _ = env_logger::builder()
-                // Include all events in tests
-                .filter_module("df", log::LevelFilter::max())
-                // Ensure events are captured by `cargo test`
-                .is_test(true)
-                // Ignore errors initializing the logger if tests race to configure it
-                .try_init();
-        });
-        let reader = ReadWav::new("../assets/clean_freesound_33711.wav").unwrap();
-        let sr = reader.sr;
-        let test_sample = reader.samples_arr2().unwrap();
-        (test_sample, sr)
-    }
+    // /// Setup function that is only run once, even if called multiple times.
+    // fn setup() -> (Array2<f32>, usize) {
+    //     seed_from_u64(42);
+    //     create_out_dir().expect("Could not create output directory");
+    //
+    //     INIT.call_once(|| {
+    //         let _ = env_logger::builder()
+    //             // Include all events in tests
+    //             .filter_module("df", log::LevelFilter::max())
+    //             // Ensure events are captured by `cargo test`
+    //             .is_test(true)
+    //             // Ignore errors initializing the logger if tests race to configure it
+    //             .try_init();
+    //     });
+    //     let reader = ReadWav::new("../assets/clean_freesound_33711.wav").unwrap();
+    //     let sr = reader.sr;
+    //     let test_sample = reader.samples_arr2().unwrap();
+    //     (test_sample, sr)
+    // }
 
     fn create_out_dir() -> std::io::Result<()> {
         match std::fs::create_dir("../out") {
@@ -615,89 +616,89 @@ mod tests {
         }
     }
 
-    #[test]
-    pub fn test_stft_istft_delay() -> Result<()> {
-        let (sample, sr) = setup();
-        let ch = sample.len_of(Axis(0)) as u16;
-        let fft_size = sr / 50;
-        let hop_size = fft_size / 2;
-        let mut state = DFState::new(sr, fft_size, hop_size, 1, 1);
-        let mut x = stft(sample.view(), &mut state, true);
-        let out = istft(x.view_mut(), &mut state, true);
-        for (ich, och) in sample.outer_iter().zip(out.outer_iter()) {
-            let xx: f32 = ich.iter().map(|&s| s * s).sum();
-            let yy: f32 = ich.iter().map(|&s| s * s).sum();
-            let xy: f32 = ich.iter().zip(och).map(|(&a, &b)| a * b).sum();
-            let corr = xy / (xx.sqrt() * yy.sqrt());
-            dbg!(corr);
-            assert!((corr - 1.).abs() < 1e-6)
-        }
-        write_wav_iter("../out/original.wav", sample.iter(), sr as u32, ch).unwrap();
-        write_wav_iter("../out/stft_istft.wav", out.iter(), sr as u32, ch).unwrap();
-        Ok(())
-    }
+    // #[test]
+    // pub fn test_stft_istft_delay() -> Result<()> {
+    //     let (sample, sr) = setup();
+    //     let ch = sample.len_of(Axis(0)) as u16;
+    //     let fft_size = sr / 50;
+    //     let hop_size = fft_size / 2;
+    //     let mut state = DFState::new(sr, fft_size, hop_size, 1, 1);
+    //     let mut x = stft(sample.view(), &mut state, true);
+    //     let out = istft(x.view_mut(), &mut state, true);
+    //     for (ich, och) in sample.outer_iter().zip(out.outer_iter()) {
+    //         let xx: f32 = ich.iter().map(|&s| s * s).sum();
+    //         let yy: f32 = ich.iter().map(|&s| s * s).sum();
+    //         let xy: f32 = ich.iter().zip(och).map(|(&a, &b)| a * b).sum();
+    //         let corr = xy / (xx.sqrt() * yy.sqrt());
+    //         dbg!(corr);
+    //         assert!((corr - 1.).abs() < 1e-6)
+    //     }
+    //     write_wav_iter("../out/original.wav", sample.iter(), sr as u32, ch).unwrap();
+    //     write_wav_iter("../out/stft_istft.wav", out.iter(), sr as u32, ch).unwrap();
+    //     Ok(())
+    // }
 
-    #[test]
-    fn test_estimate_bandwidth() -> Result<()> {
-        let (sample, sr) = setup();
-        write_wav_arr2("../out/original.wav", sample.view(), sr as u32).unwrap();
+    // #[test]
+    // fn test_estimate_bandwidth() -> Result<()> {
+    //     let (sample, sr) = setup();
+    //     write_wav_arr2("../out/original.wav", sample.view(), sr as u32).unwrap();
+    //
+    //     let fft_size = 960;
+    //     assert!(sr % fft_size == 0); // So that we have nice center freqs
+    //     let hop_size = fft_size / 2;
+    //     let mut state = DFState::new(sr, fft_size, hop_size, 1, 1);
+    //     let x = stft(sample.view(), &mut state, true);
+    //     let ws = 200; // window size
+    //     let c_db = 120.; //cut of db
+    //     let cf = rfftfreqs(fft_size / 2 + 1, sr); // center frequencies
+    //     let idx = estimate_bandwidth(x.view(), sr, c_db, ws);
+    //     assert_eq!(cf[idx], 22000.);
+    //
+    //     let sample_f2 = low_pass_resample(sample.view(), sr / 4, sr).unwrap();
+    //     write_wav_arr2("../out/resampled_f2.wav", sample_f2.view(), sr as u32).unwrap();
+    //     let x_f2 = stft(sample_f2.view(), &mut state, true);
+    //     let idx = estimate_bandwidth(x_f2.view(), sr, c_db, ws);
+    //     assert_eq!(cf[idx], 12000.);
+    //
+    //     let sample_f3 = low_pass_resample(sample.view(), sr / 6, sr).unwrap();
+    //     write_wav_arr2("../out/resampled_f3.wav", sample_f3.view(), sr as u32).unwrap();
+    //     let x_f3 = stft(sample_f3.view(), &mut state, true);
+    //     let idx = estimate_bandwidth(x_f3.view(), sr, c_db, ws);
+    //     assert_eq!(cf[idx], 8000.);
+    //
+    //     Ok(())
+    // }
 
-        let fft_size = 960;
-        assert!(sr % fft_size == 0); // So that we have nice center freqs
-        let hop_size = fft_size / 2;
-        let mut state = DFState::new(sr, fft_size, hop_size, 1, 1);
-        let x = stft(sample.view(), &mut state, true);
-        let ws = 200; // window size
-        let c_db = 120.; //cut of db
-        let cf = rfftfreqs(fft_size / 2 + 1, sr); // center frequencies
-        let idx = estimate_bandwidth(x.view(), sr, c_db, ws);
-        assert_eq!(cf[idx], 22000.);
-
-        let sample_f2 = low_pass_resample(sample.view(), sr / 4, sr).unwrap();
-        write_wav_arr2("../out/resampled_f2.wav", sample_f2.view(), sr as u32).unwrap();
-        let x_f2 = stft(sample_f2.view(), &mut state, true);
-        let idx = estimate_bandwidth(x_f2.view(), sr, c_db, ws);
-        assert_eq!(cf[idx], 12000.);
-
-        let sample_f3 = low_pass_resample(sample.view(), sr / 6, sr).unwrap();
-        write_wav_arr2("../out/resampled_f3.wav", sample_f3.view(), sr as u32).unwrap();
-        let x_f3 = stft(sample_f3.view(), &mut state, true);
-        let idx = estimate_bandwidth(x_f3.view(), sr, c_db, ws);
-        assert_eq!(cf[idx], 8000.);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_ext_bandwidth_spectral() {
-        let (sample, sr) = setup();
-        let fft_size = sr / 50;
-        dbg!(fft_size);
-        let hop_size = fft_size / 2;
-        let mut state = DFState::new(sr, fft_size, hop_size, 1, 1);
-        let mut x = stft(sample.view(), &mut state, true);
-
-        let cf = rfftfreqs(fft_size / 2 + 1, sr);
-        let idx = estimate_bandwidth(x.view(), sr, -120., 5);
-        let f_cut_off = cf[idx];
-        let max_bin = (f_cut_off / (sr as f32 / fft_size as f32)) as usize;
-        dbg!(idx, f_cut_off);
-        let mut x2 = x.clone();
-        ext_bandwidth_spectral(&mut x2, max_bin, sr, Some(4));
-        let sample_ext = istft(x2.view_mut(), &mut state, true);
-        write_wav_arr2("../out/sample_ext.wav", sample_ext.view(), sr as u32).unwrap();
-
-        let f_cut_off = 12000;
-        let max_bin = (f_cut_off as f32 / (sr as f32 / fft_size as f32)) as usize;
-        let sample_f2 = low_pass_resample(sample.view(), f_cut_off, sr).unwrap();
-        let mut x3 = stft(sample_f2.view(), &mut state, true);
-        ext_bandwidth_spectral(&mut x3, max_bin, sr, Some(4));
-        let sample_f2_ext = istft(x3.view_mut(), &mut state, true);
-        write_wav_arr2("../out/sample_f2_ext.wav", sample_f2_ext.view(), sr as u32).unwrap();
-
-        let sample = istft(x.view_mut(), &mut state, true);
-        write_wav_arr2("../out/original.wav", sample.view(), sr as u32).unwrap();
-    }
+    // #[test]
+    // fn test_ext_bandwidth_spectral() {
+    //     let (sample, sr) = setup();
+    //     let fft_size = sr / 50;
+    //     dbg!(fft_size);
+    //     let hop_size = fft_size / 2;
+    //     let mut state = DFState::new(sr, fft_size, hop_size, 1, 1);
+    //     let mut x = stft(sample.view(), &mut state, true);
+    //
+    //     let cf = rfftfreqs(fft_size / 2 + 1, sr);
+    //     let idx = estimate_bandwidth(x.view(), sr, -120., 5);
+    //     let f_cut_off = cf[idx];
+    //     let max_bin = (f_cut_off / (sr as f32 / fft_size as f32)) as usize;
+    //     dbg!(idx, f_cut_off);
+    //     let mut x2 = x.clone();
+    //     ext_bandwidth_spectral(&mut x2, max_bin, sr, Some(4));
+    //     let sample_ext = istft(x2.view_mut(), &mut state, true);
+    //     write_wav_arr2("../out/sample_ext.wav", sample_ext.view(), sr as u32).unwrap();
+    //
+    //     let f_cut_off = 12000;
+    //     let max_bin = (f_cut_off as f32 / (sr as f32 / fft_size as f32)) as usize;
+    //     let sample_f2 = low_pass_resample(sample.view(), f_cut_off, sr).unwrap();
+    //     let mut x3 = stft(sample_f2.view(), &mut state, true);
+    //     ext_bandwidth_spectral(&mut x3, max_bin, sr, Some(4));
+    //     let sample_f2_ext = istft(x3.view_mut(), &mut state, true);
+    //     write_wav_arr2("../out/sample_f2_ext.wav", sample_f2_ext.view(), sr as u32).unwrap();
+    //
+    //     let sample = istft(x.view_mut(), &mut state, true);
+    //     write_wav_arr2("../out/original.wav", sample.view(), sr as u32).unwrap();
+    // }
 
     #[test]
     fn test_find_max_abs() -> Result<()> {

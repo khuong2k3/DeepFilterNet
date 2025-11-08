@@ -23,8 +23,8 @@ use anyhow::Context;
 #[cfg(feature = "flac")]
 use claxon;
 use hdf5::{types::VarLenUnicode, File};
-use tract_core::ndarray::concatenate;
-use tract_core::ndarray::{prelude::*, Slice};
+use ndarray::concatenate;
+use ndarray::{prelude::*, Slice};
 use ndarray_rand::rand::prelude::{IteratorRandom, SliceRandom};
 use rayon::prelude::*;
 use realfft::num_traits::Zero;
@@ -65,7 +65,7 @@ pub enum DfDatasetError {
     #[error("Error Detail")]
     ErrorDetail { source: Box<Self>, msg: String },
     #[error("Ndarray Shape Error")]
-    NdarrayShapeError(#[from] tract_core::ndarray::ShapeError),
+    NdarrayShapeError(#[from] ndarray::ShapeError),
     #[error("Hdf5 Error")]
     Hdf5Error(#[from] hdf5::Error),
     #[error("Hdf5 Error Detail")]
@@ -1694,7 +1694,7 @@ impl Hdf5Dataset {
         };
         Ok(n)
     }
-    fn match_ch<T, D: tract_core::ndarray::Dimension>(
+    fn match_ch<T, D: ndarray::Dimension>(
         &self,
         mut x: Array<T, D>,
         ch_dim: usize,
