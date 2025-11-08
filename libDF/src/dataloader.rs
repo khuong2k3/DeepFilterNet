@@ -8,7 +8,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crossbeam_channel::unbounded;
-use ndarray::prelude::*;
+use tract_core::ndarray::prelude::*;
 use ndarray_rand::rand::prelude::SliceRandom;
 use rayon::{current_num_threads, prelude::*, ThreadPoolBuildError, ThreadPoolBuilder};
 use thiserror::Error;
@@ -48,7 +48,7 @@ pub enum DfDataloaderError {
     #[error("DF Dataset Error")]
     DatasetError(#[from] crate::dataset::DfDatasetError),
     #[error("Ndarray Shape Error")]
-    NdarrayShapeError(#[from] ndarray::ShapeError),
+    NdarrayShapeError(#[from] tract_core::ndarray::ShapeError),
 }
 
 impl<T> From<std::sync::mpsc::SendError<T>> for DfDataloaderError {
@@ -636,7 +636,7 @@ where
             eprintln!("  shape: {:?}", outs.shape());
         }
     }
-    Ok(ndarray::stack(Axis(0), out.as_slice())?.into_dyn())
+    Ok(tract_core::ndarray::stack(tract_core::ndarray::Axis(0), out.as_slice())?.into_dyn())
 }
 
 #[cfg(test)]

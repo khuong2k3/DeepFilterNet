@@ -1,6 +1,6 @@
 use std::mem::MaybeUninit;
 
-use ndarray::{prelude::*, Slice};
+use tract_core::ndarray::{prelude::*, Slice};
 use rubato::{FftFixedInOut, Resampler};
 use thiserror::Error;
 
@@ -13,7 +13,7 @@ pub enum TransformError {
     #[error("DF error: {0}")]
     DfError(String),
     #[error("Ndarray Shape Error")]
-    NdarrayShapeError(#[from] ndarray::ShapeError),
+    NdarrayShapeError(#[from] tract_core::ndarray::ShapeError),
     #[error("Resample Error")]
     ResampleError(#[from] rubato::ResampleError),
 }

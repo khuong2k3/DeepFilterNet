@@ -7,7 +7,7 @@ use std::time::Instant;
 use anyhow::{bail, Context, Result};
 use flate2::read::GzDecoder;
 use ini::Ini;
-use ndarray::{prelude::*, Axis};
+use tract_core::ndarray::{prelude::*, Axis};
 use tar::Archive;
 use tract_core::internal::tract_itertools::izip;
 use tract_core::internal::tract_smallvec::alloc::collections::VecDeque;

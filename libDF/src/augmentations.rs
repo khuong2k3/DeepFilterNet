@@ -3,7 +3,7 @@ use std::ops::Range;
 #[cfg(feature = "timings")]
 use std::time::Instant;
 
-use ndarray::{concatenate, prelude::*, Slice};
+use tract_core::ndarray::{concatenate, prelude::*, Slice};
 use ndarray_rand::rand::{prelude::IteratorRandom, seq::SliceRandom, Rng};
 use ndarray_rand::{rand_distr::Normal, rand_distr::Uniform, RandomExt};
 use thiserror::Error;
@@ -29,7 +29,7 @@ pub enum AugmentationError {
     #[error("DF error: {0}")]
     DfError(String),
     #[error("Ndarray Shape Error")]
-    NdarrayShapeError(#[from] ndarray::ShapeError),
+    NdarrayShapeError(#[from] tract_core::ndarray::ShapeError),
     #[error("Wav Reader Error")]
     WavReadError(#[from] crate::wav_utils::WavUtilsError),
 }

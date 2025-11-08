@@ -6,7 +6,7 @@ use std::{
 
 use hound::{WavReader, WavWriter};
 #[cfg(any(feature = "dataset", feature = "wav-utils"))]
-use ndarray::prelude::*;
+use tract_core::ndarray::prelude::*;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -16,7 +16,7 @@ pub enum WavUtilsError {
     #[error("Hound Error Detail")]
     HoundErrorDetail { source: hound::Error, msg: String },
     #[error("Ndarray Shape Error")]
-    NdarrayShapeError(#[from] ndarray::ShapeError),
+    NdarrayShapeError(#[from] tract_core::ndarray::ShapeError),
 }
 
 pub struct ReadWav {

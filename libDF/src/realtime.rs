@@ -8,7 +8,7 @@ use crate::tract::{DfParams, DfTract, RuntimeParams};
 use crate::Complex32;
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender};
-use ndarray::{Array2, ArrayView2, Axis};
+use tract_core::ndarray::{Array2, ArrayView2, Axis};
 
 use ringbuf::producer::PostponedProducer;
 use ringbuf::{Consumer, HeapRb, SharedRb};

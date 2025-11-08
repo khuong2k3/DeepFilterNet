@@ -47,7 +47,6 @@ type Receiver<T> = crossbeam_channel::Receiver<T>;
 type Sender<T> = crossbeam_channel::Sender<T>;
 mod audio;
 mod cmap;
-mod widget;
 const DB_MIN: f32 = -90.0;
 const DB_MAX: f32 = -10.0;
 
